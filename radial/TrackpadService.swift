@@ -220,6 +220,10 @@ final class TrackpadService {
 
     // MARK: - Helpers
 
+    /// True while a finger is physically resting on the trackpad (used by the
+    /// mouse trigger to distinguish a real mouse click from a trackpad tap/click).
+    var hasFingerContact: Bool { lastFingerSize >= clickFingerPresenceThreshold }
+
     /// Returns true if the cursor is currently over one of our app's windows.
     private func isMouseOverOwnWindow() -> Bool {
         let mouseLoc = NSEvent.mouseLocation

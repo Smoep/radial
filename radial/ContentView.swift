@@ -7,13 +7,13 @@ struct ContentView: View {
     @State private var selectedTab: SettingsTab = .menu
 
     enum SettingsTab: String, CaseIterable {
-        case menu = "Menu", trackpad = "Trackpad", shortcut = "Shortcut"
-        case appearance = "Appearance", general = "General"
+        case menu = "Menu", triggers = "Triggers"
+        case appearance = "Appearance", behavior = "Behavior"
 
         var icon: String {
             switch self {
-            case .menu: "square.grid.2x2"; case .trackpad: "hand.point.up.left"
-            case .shortcut: "keyboard"; case .appearance: "paintbrush"; case .general: "gearshape"
+            case .menu: "square.grid.2x2"; case .triggers: "cursorarrow.click"
+            case .appearance: "paintbrush"; case .behavior: "gearshape"
             }
         }
     }
@@ -75,10 +75,9 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     switch selectedTab {
                     case .menu:       menuTab
-                    case .trackpad:   trackpadTab
-                    case .shortcut:   shortcutTab
+                    case .triggers:   triggersTab
                     case .appearance: appearanceTab
-                    case .general:    generalTab
+                    case .behavior:   behaviorTab
                     }
                 }
                 .padding(16)
@@ -111,7 +110,15 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder private var trackpadTab: some View {
+    // MARK: - Triggers tab
+
+    @ViewBuilder private var triggersTab: some View {
+        trackpadGroup
+        mouseGroup
+        keyboardGroup
+    }
+
+    @ViewBuilder private var trackpadGroup: some View {
         SettingsSection(title: "Trackpad") {
             SettingsToggle("Trackpad Trigger",
                 isOn: Binding(get: { engine.settings.trackpadEnabled },
@@ -137,24 +144,8 @@ struct ContentView: View {
                 SettingsSlider("Hold Duration",
                     value: Binding(get: { engine.settings.activationHoldDuration },
                                    set: { engine.settings.activationHoldDuration = $0 }),
-                    range: 0.10...1.50, step: 0.05, format: "%.2fs",
-                    caption: "How long the finger must rest before the menu opens")
-
-                SettingsSlider("Ring Delay",
-                    value: Binding(get: { engine.settings.ringDelay },
-                                   set: { engine.settings.ringDelay = $0 }),
-                    range: 0.05...0.80, step: 0.05, format: "%.2fs",
-                    caption: "Delay before the loading ring appears — avoids flicker on quick taps")
-
-                SettingsSlider("Activation Zone",
-                    value: Binding(get: { engine.settings.activationMargin },
-                                   set: { engine.settings.activationMargin = $0 }),
-                    range: 0...40, step: 5, format: "%.0f%%",
-                    caption: engine.settings.activationMargin > 0
-                        ? "Ignores touches within \(Int(engine.settings.activationMargin))% of the left/right edges"
-                        : "Touches anywhere on the trackpad can trigger the menu")
-
-                Divider().padding(.vertical, 2)
+                    range: 0.00...1.50, step: 0.05, format: "%.2fs",
+                    caption: "How long the finger must rest before the menu opens (0 = instant)")
 
                 SettingsToggle("Lift to Select",
                     isOn: Binding(get: { engine.settings.liftToSelect },
@@ -166,7 +157,50 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder private var shortcutTab: some View {
+    @ViewBuilder private var mouseGroup: some View {
+        SettingsSection(title: "Mouse") {
+            SettingsToggle("Mouse Trigger",
+                isOn: Binding(get: { engine.settings.mouseEnabled },
+                              set: { engine.settings.mouseEnabled = $0 }))
+
+            if engine.settings.mouseEnabled {
+                Divider().padding(.vertical, 2)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Activation Button").font(.callout).foregroundStyle(.secondary)
+                    Picker("", selection: Binding(
+                        get: { engine.settings.mouseButton },
+                        set: { engine.settings.mouseButton = $0 })) {
+                        ForEach(MouseButton.allCases) { b in Text(b.rawValue).tag(b) }
+                    }
+                    .labelsHidden().pickerStyle(.segmented)
+                    Text(engine.settings.mouseButton == .left
+                         ? "Left-click and hold to open the menu"
+                         : "Middle-click to open the menu")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Divider().padding(.vertical, 2)
+
+                SettingsSlider("Hold Duration",
+                    value: Binding(get: { engine.settings.mouseHoldDuration },
+                                   set: { engine.settings.mouseHoldDuration = $0 }),
+                    range: 0.00...1.50, step: 0.05, format: "%.2fs",
+                    caption: "How long the button must be held before the menu opens (0 = instant)")
+
+                Divider().padding(.vertical, 2)
+
+                SettingsToggle("Release to Select",
+                    isOn: Binding(get: { engine.settings.mouseReleaseToSelect },
+                                  set: { engine.settings.mouseReleaseToSelect = $0 }),
+                    caption: engine.settings.mouseReleaseToSelect
+                        ? "Release the button to confirm selection"
+                        : "Click again to confirm selection")
+            }
+        }
+    }
+
+    @ViewBuilder private var keyboardGroup: some View {
         SettingsSection(title: "Keyboard Shortcut") {
             HotkeyRecorderRow(settings: engine.settings)
 
@@ -207,13 +241,21 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder private var generalTab: some View {
-        SettingsSection(title: "General") {
-            SettingsSlider("Cooldown",
-                value: Binding(get: { engine.settings.cooldownDuration },
-                               set: { engine.settings.cooldownDuration = $0 }),
-                range: 0.1...2.0, step: 0.1, format: "%.1fs",
-                caption: "Wait after a selection before the menu can open again")
+    @ViewBuilder private var behaviorTab: some View {
+        SettingsSection(title: "Behavior") {
+            SettingsSlider("Ring Delay",
+                value: Binding(get: { engine.settings.ringDelay },
+                               set: { engine.settings.ringDelay = $0 }),
+                range: 0.05...0.80, step: 0.05, format: "%.2fs",
+                caption: "Delay before the loading ring appears — avoids flicker on quick taps")
+
+            Divider().padding(.vertical, 2)
+
+            SettingsSlider("Category Flexibility",
+                value: Binding(get: { engine.settings.categoryFlexibilityPercent },
+                               set: { engine.settings.categoryFlexibilityPercent = $0 }),
+                range: 0...50, step: 5, format: "%.0f%%",
+                caption: "Lets you switch categories closer to the center before the choice locks")
 
             Divider().padding(.vertical, 2)
 

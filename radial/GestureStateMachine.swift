@@ -19,6 +19,8 @@ enum GesturePhase: String {
 /// On touch-up while active, returns the finalize signal.
 final class GestureStateMachine {
 
+    private static let cooldownDuration: TimeInterval = 0.4
+
     private(set) var phase: GesturePhase = .idle
     private(set) var candidateStartTime: Date? = nil
     private var lastReleaseTime: Date = .distantPast
@@ -40,7 +42,7 @@ final class GestureStateMachine {
         case .touchDown:
             switch phase {
             case .idle:
-                let cooldownPassed = now.timeIntervalSince(lastReleaseTime) >= settings.cooldownDuration
+                let cooldownPassed = now.timeIntervalSince(lastReleaseTime) >= Self.cooldownDuration
                 if cooldownPassed {
                     candidateStartTime = now
                     phase = .candidate

@@ -8,6 +8,21 @@ enum HotkeyMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Which mouse button opens the radial overlay.
+enum MouseButton: String, CaseIterable, Identifiable {
+    case left   = "Left"
+    case middle = "Middle"
+    var id: String { rawValue }
+
+    /// NSEvent buttonNumber: left = 0, right = 1, middle = 2.
+    var buttonNumber: Int {
+        switch self {
+        case .left:   0
+        case .middle: 2
+        }
+    }
+}
+
 /// What physical gesture opens the radial overlay, ordered by increasing click depth.
 enum ActivationTrigger: String, CaseIterable, Identifiable {
     /// Touch and hold still — no physical click (current default).
@@ -48,7 +63,6 @@ final class AppSettings {
     private func persistAll() {
         let d = UserDefaults.standard
         d.set(activationHoldDuration, forKey: "activationHoldDuration")
-        d.set(cooldownDuration, forKey: "cooldownDuration")
         d.set(gridDivisions, forKey: "gridDivisions")
         d.set(dragRange, forKey: "dragRange")
         d.set(ringDelay, forKey: "ringDelay")
@@ -57,6 +71,7 @@ final class AppSettings {
         d.set(activationMargin, forKey: "activationMargin")
         d.set(ringHeight, forKey: "ringHeight")
         d.set(selectionWidth, forKey: "selectionWidth")
+        d.set(categoryFlexibilityPercent, forKey: "categoryFlexibilityPercent")
         d.set(pauseWhileTyping, forKey: "pauseWhileTyping")
         d.set(activationTrigger.rawValue, forKey: "activationTrigger")
         d.set(overlayOpacity, forKey: "overlayOpacity")
@@ -67,6 +82,10 @@ final class AppSettings {
         d.set(hotkeyMode.rawValue, forKey: "hotkeyMode")
         d.set(doubleTapWindow, forKey: "doubleTapWindow")
         d.set(trackpadEnabled, forKey: "trackpadEnabled")
+        d.set(mouseEnabled, forKey: "mouseEnabled")
+        d.set(mouseButton.rawValue, forKey: "mouseButton")
+        d.set(mouseHoldDuration, forKey: "mouseHoldDuration")
+        d.set(mouseReleaseToSelect, forKey: "mouseReleaseToSelect")
     }
 
     // MARK: - Activation
@@ -81,13 +100,31 @@ final class AppSettings {
         didSet { scheduleSave() }
     }
 
-    /// Minimum touch hold time (seconds) before entering Active.
-    var activationHoldDuration: Double = 0.60 {
+    // MARK: - Mouse trigger
+
+    /// Whether the mouse-button trigger is active.
+    var mouseEnabled: Bool = false {
         didSet { scheduleSave() }
     }
 
-    /// Cooldown in seconds between completed gestures (prevents runaway re-triggers).
-    var cooldownDuration: Double = 0.6 {
+    /// Which mouse button opens the overlay.
+    var mouseButton: MouseButton = .middle {
+        didSet { scheduleSave() }
+    }
+
+    /// Hold time (seconds) before the mouse click engages. 0 = immediate.
+    var mouseHoldDuration: Double = 0.0 {
+        didSet { scheduleSave() }
+    }
+
+    /// When true, releasing the mouse button while engaged confirms the selection.
+    /// When false, a separate click confirms.
+    var mouseReleaseToSelect: Bool = true {
+        didSet { scheduleSave() }
+    }
+
+    /// Minimum touch hold time (seconds) before entering Active.
+    var activationHoldDuration: Double = 0.60 {
         didSet { scheduleSave() }
     }
 
@@ -137,6 +174,11 @@ final class AppSettings {
 
     /// Arc-length per item in deeper rings (points). Controls how wide each action/folder slice is.
     var selectionWidth: Double = 45 {
+        didSet { scheduleSave() }
+    }
+
+    /// Percentage of the first ring where the selected category can still change.
+    var categoryFlexibilityPercent: Double = 0 {
         didSet { scheduleSave() }
     }
 
@@ -228,7 +270,6 @@ final class AppSettings {
     private init() {
         let d = UserDefaults.standard
         if let v = d.object(forKey: "activationHoldDuration") as? Double { activationHoldDuration = v }
-        if let v = d.object(forKey: "cooldownDuration")  as? Double { cooldownDuration  = v }
         if let v = d.object(forKey: "gridDivisions")     as? Int    { gridDivisions     = v }
         if let v = d.object(forKey: "dragRange")         as? Double { dragRange         = v }
         if let v = d.object(forKey: "ringDelay")          as? Double { ringDelay          = v }
@@ -237,6 +278,9 @@ final class AppSettings {
         if let v = d.object(forKey: "activationMargin")  as? Double { activationMargin  = v }
         if let v = d.object(forKey: "ringHeight")        as? Double { ringHeight        = v }
         if let v = d.object(forKey: "selectionWidth")    as? Double { selectionWidth    = v }
+        if let v = d.object(forKey: "categoryFlexibilityPercent") as? Double {
+            categoryFlexibilityPercent = min(max(v, 0), 50)
+        }
         if let v = d.object(forKey: "pauseWhileTyping")  as? Bool   { pauseWhileTyping  = v }
         if let v = d.object(forKey: "overlayOpacity")    as? Double { overlayOpacity    = v }
         if let v = d.object(forKey: "activationTrigger") as? String,
@@ -249,5 +293,10 @@ final class AppSettings {
            let m = HotkeyMode(rawValue: v)            { hotkeyMode = m }
         if let v = d.object(forKey: "doubleTapWindow") as? Double { doubleTapWindow = v }
         if let v = d.object(forKey: "trackpadEnabled") as? Bool   { trackpadEnabled = v }
+        if let v = d.object(forKey: "mouseEnabled")    as? Bool   { mouseEnabled    = v }
+        if let v = d.object(forKey: "mouseButton") as? String,
+           let b = MouseButton(rawValue: v)                       { mouseButton     = b }
+        if let v = d.object(forKey: "mouseHoldDuration") as? Double { mouseHoldDuration = v }
+        if let v = d.object(forKey: "mouseReleaseToSelect") as? Bool { mouseReleaseToSelect = v }
     }
 }

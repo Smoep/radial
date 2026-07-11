@@ -57,6 +57,7 @@ final class SessionEngine {
 
     let settings: AppSettings
     let trackpad: TrackpadService
+    private let mouse = MouseTriggerService()
     private let stateMachine: GestureStateMachine
     private let selectionOverlay = SelectionOverlay()
 
@@ -204,6 +205,18 @@ final class SessionEngine {
         self.trackpad.shouldSuppressActivation = { [weak self] in
             self?.isPausedForTyping ?? false
         }
+        configureMouseTrigger()
+    }
+
+    /// Wire the isolated mouse trigger to the shared engagement API.
+    private func configureMouseTrigger() {
+        mouse.settings           = settings
+        mouse.isEngaged          = { [weak self] in self?.trackpad.isEngaged ?? false }
+        mouse.hasTrackpadContact = { [weak self] in self?.trackpad.hasFingerContact ?? false }
+        mouse.canActivate        = { [weak self] in (self?.isPausedForTyping ?? false) == false }
+        mouse.onOpen             = { [weak self] in self?.trackpad.engage(external: true) }
+        mouse.onDismiss          = { [weak self] in self?.dismissOverlay() }
+        mouse.onSelect           = { [weak self] in self?.trackpad.triggerExternalRelease() }
     }
 
     // MARK: - Lifecycle
@@ -213,6 +226,7 @@ final class SessionEngine {
         isRunning = true
         stateMachine.reset()
         trackpad.start()
+        mouse.start()
 
         // Combined monitor: pause-while-typing detection + hotkey trigger.
         // One monitor handles both so the hotkey is never treated as a "typing" keystroke.
@@ -265,6 +279,7 @@ final class SessionEngine {
         pollTimer?.invalidate()
         pollTimer = nil
         trackpad.stop()
+        mouse.stop()
         stateMachine.reset()
         if let m = keyMonitor    { NSEvent.removeMonitor(m); keyMonitor    = nil }
         if let m = hotkeyMonitor { NSEvent.removeMonitor(m); hotkeyMonitor = nil }
@@ -423,7 +438,17 @@ final class SessionEngine {
         let catCount = categories.count
         let catAngle = (2 * Double.pi) / Double(catCount)
 
-        if selectionPath.isEmpty || lockedDepth == 0 {
+        let firstRingThickness = ringOuterRadius(depth: 0) - ringInnerRadius(depth: 0)
+        let flexibleBoundary = ringInnerRadius(depth: 0)
+            + firstRingThickness * (settings.categoryFlexibilityPercent / 100.0)
+        // Purely positional: the category can change whenever the cursor is in the
+        // inner flexible band of the first ring. There is no permanent commit — moving
+        // outward (or into a deeper ring) simply keeps the current category, and
+        // returning to the flexible band re-enables switching.
+        let canChangeCategory = selectionPath.isEmpty
+            || (cursorDepth == 0 && pixelDist < flexibleBoundary)
+
+        if canChangeCategory {
             let catIdx = Int(cwAngle / catAngle) % catCount
             if selectionPath.isEmpty {
                 selectionPath = [catIdx]
