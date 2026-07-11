@@ -52,7 +52,6 @@ The center of the menu is always a cancel zone. Your finger never leaves the tra
 
 - macOS 26 (Tahoe) or later
 - Xcode 26+ to build from source
-- Accessibility permission (for global event tap)
 
 ---
 
