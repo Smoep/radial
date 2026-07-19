@@ -60,7 +60,7 @@ The center of the menu is always a cancel zone. Your finger never leaves the tra
 ```bash
 git clone https://github.com/Smoep/radial.git
 cd radial
-xcodebuild -project pinch_control.xcodeproj -scheme radial -configuration Release \
+xcodebuild -project radial.xcodeproj -scheme radial -configuration Release \
   -derivedDataPath build-release build
 cp -R build-release/Build/Products/Release/Radial.app /Applications/Radial.app
 open /Applications/Radial.app

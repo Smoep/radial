@@ -1,13 +1,13 @@
-# Track Zone — Lessons Learned & Handover
+# Radial — Lessons Learned & Handover
 
-A comprehensive reference for building the next macOS gesture-driven utility app.
-Everything we learned building Track Zone — what worked, what didn't, and why.
+A comprehensive reference for maintaining Radial.
+Everything we learned building Radial — what worked, what didn't, and why.
 
 ---
 
 ## Table of Contents
 
-1. [What Track Zone Is](#1-what-track-zone-is)
+1. [What Radial Is](#1-what-radial-is)
 2. [UX Principles — What We Got Right](#2-ux-principles)
 3. [Architecture & Code Patterns](#3-architecture--code-patterns)
 4. [macOS System Integration](#4-macos-system-integration)
@@ -22,11 +22,10 @@ Everything we learned building Track Zone — what worked, what didn't, and why.
 13. [Unfixed / Known Remaining Issues](#13-unfixed--remaining-issues)
 14. [Reusable Components](#14-reusable-components)
 15. [Quick Reference: Key Codes & Constants](#15-quick-reference)
-16. [Next Project — GestureSign-Style App](#16-next-project)
 
 ---
 
-## 1. What Track Zone Is
+## 1. What Radial Is
 
 A macOS radial action launcher activated by **touch-and-hold** on the trackpad.
 
@@ -93,7 +92,7 @@ We started with a grid and moved to radial. Radial is better because:
 
 ### 2.9 Keep App Running in Background
 - `applicationShouldTerminateAfterLastWindowClosed` returns `false`
-- Menu bar icon always accessible — "Track Zone Settings" to reopen window
+- Menu bar icon always accessible — "Radial Settings" to reopen window
 - User closes settings, app keeps listening on trackpad
 
 ---
@@ -103,7 +102,7 @@ We started with a grid and moved to radial. Radial is better because:
 ### 3.1 Component Hierarchy
 
 ```
-pinch_controlApp.swift     App entry + menu bar + dock icon
+RadialApp.swift            App entry + menu bar + dock icon
   └─ ContentView.swift     Settings UI (ScrollView + sliders + editor)
        └─ SessionEngine    Central coordinator (created as @State)
             ├─ AppSettings        User preferences (singleton)
@@ -290,7 +289,7 @@ window.makeKeyAndOrderFront(nil)
 
 Find the main window by title or identifier:
 ```swift
-NSApp.windows.first(where: { $0.title == "Track Zone" || $0.identifier?.rawValue.contains("main") == true })
+NSApp.windows.first(where: { $0.title == "Radial" || $0.identifier?.rawValue.contains("main") == true })
 ```
 
 ---
@@ -729,12 +728,12 @@ The same view renders at every depth. Path grows as you go deeper.
 
 ### 11.1 Project Setup
 
-- **Xcode project**: `pinch_control.xcodeproj`, scheme: `pinch_control`
-- **Bundle ID**: `com.jos.pinch-control-3d` (DO NOT CHANGE — accessibility permissions)
-- **Product name**: "Track Zone" (can differ from bundle ID)
+- **Xcode project**: `radial.xcodeproj`, scheme: `radial`
+- **Bundle ID**: `com.jos.radial`
+- **Product name**: "Radial"
 - **Target**: macOS 26.4+, arm64
 - **Build system**: `PBXFileSystemSynchronizedRootGroup` — drop `.swift` files in
-  `pinch_control/` folder and they auto-build. No pbxproj edits needed.
+  `radial/` folder and they auto-build. No pbxproj edits needed.
 
 ### 11.2 App Icon Asset Catalog — Checklist
 
@@ -779,10 +778,10 @@ code stripping. Release builds use `-wholemodule` optimization, stripping, and d
 **Binary size**: 2.7 MB (Release) vs 3.8 MB (Debug) — 30% smaller.
 
 ```bash
-cd /Users/jos/Downloads/apple_data/track_zone
+cd /Users/jos/projects/mac/radial
 
-xcodebuild -project pinch_control.xcodeproj \
-           -scheme pinch_control \
+xcodebuild -project radial.xcodeproj \
+           -scheme radial \
            -configuration Release \
            -derivedDataPath build-release \
            build 2>&1 | grep -E "error:|BUILD" | head -20
@@ -791,11 +790,11 @@ xcodebuild -project pinch_control.xcodeproj \
 ### 11.3 Deploy
 
 ```bash
-pkill -9 "Track Zone" 2>/dev/null
+pkill -9 "Radial" 2>/dev/null
 sleep 0.5
-rm -rf "/Applications/Track Zone.app"
-cp -R "build-release/Build/Products/Release/Track Zone.app" "/Applications/Track Zone.app"
-open -a "/Applications/Track Zone.app"
+rm -rf "/Applications/Radial.app"
+cp -R "build-release/Build/Products/Release/Radial.app" "/Applications/Radial.app"
+open -a "/Applications/Radial.app"
 ```
 
 **NEVER codesign after deploy** — invalidates accessibility permissions.
@@ -804,7 +803,7 @@ open -a "/Applications/Track Zone.app"
 
 ```bash
 # Find PID
-ps aux | grep "Track Zone"
+ps aux | grep "Radial"
 
 # Sample CPU usage (5 seconds)
 sample <PID> 5
@@ -855,13 +854,13 @@ even when values hadn't changed meaningfully. Triggered unnecessary SwiftUI diff
 **Bug**: `Array(prefix(...))` creates a new array every tick.
 **Fix**: `removeSubrange(needed...)` mutates in-place.
 
-### 12.8 Fn key detection via NSEvent.flagsChanged (previous project)
+### 12.8 Fn key detection via NSEvent.flagsChanged
 **Bug**: `flagsChanged` is polluted by synthetic events from `CGEvent.post()`.
 **Fix**: Use polling with `DispatchSource` at 16ms +
 `CGEventSource.flagsState(.hidSystemState)` — but ONLY for polling, never for
 event filtering.
 
-### 12.9 Using AppleScript for key simulation (previous project)
+### 12.9 Using AppleScript for key simulation
 **Bug**: AppleScript via `osascript` for keyboard shortcuts — 100ms+ latency.
 **Fix**: CGEvent for keyboard shortcuts (instant). Keep AppleScript only for
 things like `open -a`.
@@ -869,12 +868,6 @@ things like `open -a`.
 ### 12.10 macOS key code for "5" is 23, not 22
 Key code 22 = "6". This was a silent bug that sent the wrong key. Always verify
 key codes against Apple's documented virtual key code table.
-
-### 12.11 Camera mirroring (previous project)
-**Bug**: Front camera was mirrored, making hand detection confusing.
-**Fix**: `connection.isVideoMirrored = false` on front AVCaptureDevice.
-
----
 
 ## 13. Unfixed / Remaining Issues
 
@@ -913,7 +906,7 @@ These are known but not worth fixing unless they become bottlenecks:
 | Recursive data CRUD | `RadialMenuModel.swift` | Path-based tree operations |
 | NSWindow overlay | `SelectionOverlay.swift` | Borderless, clear, ignoresMouseEvents |
 | CVDisplayLink animation | `CandidateOverlay.swift` | Frame-perfect 60fps without Timer coalescing |
-| Menu bar status item | `pinch_controlApp.swift` | NSStatusItem + NSMenu |
+| Menu bar status item | `RadialApp.swift` | NSStatusItem + NSMenu |
 
 ---
 
@@ -960,144 +953,3 @@ func colorFromHex(_ hex: String) -> Color {
                  blue: Double(val & 0xFF) / 255)
 }
 ```
-
----
-
-## 16. Next Project — GestureSign-Style App
-
-### 16.1 Reference: GestureSign
-
-**GitHub**: https://github.com/TransposonY/GestureSign
-
-GestureSign is a Windows gesture recognition app (C#/.NET). The user draws a
-gesture on the touchscreen/trackpad/mouse, and the app matches it against
-recorded patterns to trigger an action. This is the reference for the next macOS
-app we're building.
-
-**GestureSign's architecture** (to replicate on macOS):
-
-| Component | GestureSign (Windows) | Our macOS equivalent |
-|---|---|---|
-| Input capture | WM_POINTER / WM_TOUCH / RawInput | MultitouchSupport.framework (already built in Track Zone) |
-| Background daemon | `GestureSign.Daemon` (tray app) | Menu bar app (already built in Track Zone) |
-| Settings UI | `GestureSign.ControlPanel` (WPF) | SwiftUI settings window |
-| Pattern matching | `GestureSign.PointPatterns` | Port the algorithm to Swift |
-| Gesture model | `Gesture` → `PointPattern[]` → `Point[][]` | Swift Codable structs |
-| Action system | Plugins (keyboard, app launch, shell, etc.) | `ActionExecutor` (already built) |
-
-### 16.2 How GestureSign's Pattern Matching Works
-
-The algorithm (a variant of the $1 Recognizer):
-
-1. **Record** raw touch points from the trackpad as `Point[]` per finger
-2. **Interpolate** to N equidistant points (default N=100, called "Precision")
-3. **Compute angular gradients** between consecutive interpolated points
-4. **Compare** angular gradient arrays between recorded template and live input
-5. **Score** via average angular delta → probability (0–100%)
-
-Key classes to port:
-- `PointPatternMath` — interpolation, angular gradients, distance calculations
-- `PointPatternAnalyzer` — compares input against stored templates
-- `PointsPatternSet` — wraps a point array with cached angular margins
-- `PointPattern` — `Point[][]` (outer = per-finger, inner = points in that trace)
-- `Gesture` — `Name` + `PointPattern[]` (multiple recorded samples of the same gesture)
-
-### 16.3 Critical UX Lessons for the New App
-
-#### Record gestures from the ACTUAL trackpad — never draw with mouse
-
-GestureSign records the real touch input. The user performs the actual gesture on
-the trackpad, and the app captures the point stream. Do NOT make the user draw
-with a mouse on screen — that's a completely different motor pattern and won't
-match how they naturally gesture.
-
-**Implementation**: When the user clicks "Record", start capturing multitouch
-frames from `MultitouchSupport`, collect the normalized (x, y) points into
-arrays (one per finger), stop when all fingers lift, and store the result.
-
-#### Finger count is intrinsic to the gesture — no slider
-
-Do NOT add a "trigger fingers" slider or picker. The number of fingers is
-automatically determined by how many simultaneous contacts are on the trackpad
-during recording. A 3-finger swipe-left is a different gesture from a 2-finger
-swipe-left — the finger count is part of the gesture identity, captured during
-recording, and used as a first-pass filter during matching (only compare against
-templates with the same finger count).
-
-```
-Gesture recording:
-  User touches trackpad with 3 fingers → record 3 point arrays
-  fingerCount = pointArrays.count  // automatic, no UI needed
-
-Gesture matching:
-  Input has 3 fingers → only compare against 3-finger templates
-  Input has 2 fingers → only compare against 2-finger templates
-```
-
-#### Record + Clear buttons in the gesture editor
-
-The gesture editor should have two buttons side by side:
-- **Record** (circle icon) — enters recording mode, captures the next trackpad
-  gesture, shows a live preview of the recorded points
-- **Clear** (xmark icon) — clears the recorded gesture pattern
-
-During recording, show a visual indicator (pulsing dot, "Perform gesture on
-trackpad...") so the user knows the app is listening. Stop recording
-automatically when all fingers lift.
-
-#### Record button for keyboard shortcuts (already solved)
-
-Track Zone's `KeyRecorder` pattern works well: click the shortcut field, it
-shows "Press any key...", captures the next keypress with modifiers, and
-displays the result. Carry this forward as-is. The key lesson: the user should
-always **perform** the thing, never **type** it into a text field.
-
-### 16.4 GestureSign Data Model (to replicate)
-
-```swift
-/// A single recorded gesture template.
-struct GestureTemplate: Codable, Identifiable {
-    var id: String                    // UUID
-    var name: String                  // "Three-finger swipe left"
-    var pointPatterns: [PointPattern] // Multiple samples of the same gesture
-}
-
-/// One recorded sample of a gesture.
-struct PointPattern: Codable {
-    var points: [[CGPoint]]           // points[fingerIndex][sampleIndex]
-    var fingerCount: Int { points.count }
-}
-
-/// A gesture → action binding.
-struct GestureAction: Codable, Identifiable {
-    var id: String
-    var gestureName: String           // references GestureTemplate.name
-    var actionType: ActionType        // keyboard, app, shell, media
-    var actionConfig: ActionConfig    // same as Track Zone's
-}
-```
-
-### 16.5 Things to Carry Forward from Track Zone
-
-| What | Where | Notes |
-|---|---|---|
-| MultitouchSupport bridge | `TrackpadService.swift` | Already captures per-finger positions |
-| CGEventTap suppression | `TrackpadService.swift` | Suppress events during gesture recording |
-| ActionExecutor | `ActionExecutor.swift` | Keyboard, app launch, shell, media — copy as-is |
-| ActionMapping model | `ActionMapping.swift` | Action config — copy as-is |
-| KeyRecorder | `RadialMenuEditor.swift` | Keyboard shortcut recording — extract to own file |
-| Debounced UserDefaults | `AppSettings.swift` | Settings pattern — copy as-is |
-| Glass UI / overlay | `SelectionOverlay.swift` | Glass slice drawing recipe — adapt for gesture preview |
-| Menu bar + background | `pinch_controlApp.swift` | Menu bar icon + keep-alive pattern |
-| Settings UI helpers | `ContentView.swift` | `SettingsSection`, `SettingsSlider` — copy as-is |
-| Delta-guarded @Observable | `SessionEngine.swift` | Pattern — always use for high-frequency updates |
-
-### 16.6 Things NOT to Carry Forward
-
-| What | Why |
-|---|---|
-| Radial pie menu | New app uses gesture shapes, not radial selection |
-| Ring geometry / angles | Not applicable to gesture recognition |
-| Selection path / locked depth | Gesture matching replaces hierarchical selection |
-| Candidate hold timer | Gestures start on touch-down, no hold needed |
-| CandidateOverlay | No hold = no loading ring needed |

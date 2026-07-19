@@ -1,14 +1,14 @@
 //
-//  pinch_controlTests.swift
-//  pinch_controlTests
+//  RadialTests.swift
+//  RadialTests
 //
 //  Created by Jos on 10/4/26.
 //
 
 import Testing
-@testable import pinch_control_2d
+@testable import Radial
 
-struct pinch_control_2dTests {
+struct RadialTests {
 
     @Test func example() async throws {
         // Write your test here and use APIs like `#expect(...)` to check expected conditions.

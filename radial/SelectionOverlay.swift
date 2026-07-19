@@ -48,15 +48,42 @@ final class SelectionOverlay {
         }
 
         let cursorLoc = NSEvent.mouseLocation
-        let origin = NSPoint(
+        let unclampedOrigin = NSPoint(
             x: cursorLoc.x - size / 2,
             y: cursorLoc.y - size / 2
         )
-        center = CGPoint(x: cursorLoc.x, y: cursorLoc.y)
+        let origin = clampedOrigin(for: unclampedOrigin, windowSize: size, cursorLoc: cursorLoc)
+        center = CGPoint(x: origin.x + size / 2, y: origin.y + size / 2)
         window?.setFrame(NSRect(origin: origin, size: NSSize(width: size, height: size)), display: true)
+        if center != CGPoint(x: cursorLoc.x, y: cursorLoc.y) {
+            moveCursor(to: center)
+        }
         window?.alphaValue = 1.0
         window?.orderFrontRegardless()
         playAppear()
+    }
+
+    private func clampedOrigin(for origin: NSPoint, windowSize: CGFloat, cursorLoc: NSPoint) -> NSPoint {
+        let screen = NSScreen.screens.first { $0.frame.contains(cursorLoc) } ?? NSScreen.main
+        guard let visibleFrame = screen?.visibleFrame else { return origin }
+
+        let maxX = max(visibleFrame.minX, visibleFrame.maxX - windowSize)
+        let maxY = max(visibleFrame.minY, visibleFrame.maxY - windowSize)
+        return NSPoint(
+            x: min(max(origin.x, visibleFrame.minX), maxX),
+            y: min(max(origin.y, visibleFrame.minY), maxY)
+        )
+    }
+
+    private func moveCursor(to point: CGPoint) {
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }),
+              let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return }
+        let displayID = CGDirectDisplayID(screenNumber.uint32Value)
+        let displayPoint = CGPoint(
+            x: point.x - screen.frame.minX,
+            y: screen.frame.maxY - point.y
+        )
+        CGDisplayMoveCursorToPoint(displayID, displayPoint)
     }
 
     func hide() {
@@ -199,7 +226,7 @@ private struct OverlayRadialView: View {
                 drawCurvedLabel(
                     cat.label, context: context, center: center,
                     radius: labelR + 16, midAngle: midA,
-                    fontSize: 11, maxAngle: (a2 - a1) * 0.92,
+                    fontSize: CGFloat(AppSettings.shared.menuLabelFontSize), maxAngle: (a2 - a1) * 0.92,
                     opacity: 0.9 * labelAlpha
                 )
             }
@@ -265,16 +292,28 @@ private struct OverlayRadialView: View {
                     let iconPt = pointOnCircle(center, labelR - 12, midA)
 
                     let iconName = isSubcat ? "folder.fill" : item.systemImage
-                    drawRotatedIcon(
-                        systemName: iconName, context: context,
-                        at: iconPt, angle: midA,
-                        fontSize: isSelected ? 20 : 17, opacity: actLabelAlpha
-                    )
+                    if !isSubcat,
+                       item.actionType == .openApplication,
+                              item.actionConfig.useAppIcon ?? true,
+                       let appPath = item.actionConfig.appPath,
+                       let appIcon = AppIconCache.icon(forAppPath: appPath) {
+                        drawRotatedAppIcon(
+                            appIcon, context: context,
+                            at: iconPt, angle: midA,
+                            size: isSelected ? 32 : 28, opacity: actLabelAlpha
+                        )
+                    } else {
+                        drawRotatedIcon(
+                            systemName: iconName, context: context,
+                            at: iconPt, angle: midA,
+                            fontSize: isSelected ? 20 : 17, opacity: actLabelAlpha
+                        )
+                    }
 
                     drawCurvedLabel(
                         item.label, context: context, center: center,
                         radius: labelR + 16, midAngle: midA,
-                        fontSize: 11, maxAngle: (a2 - a1) * 0.92,
+                        fontSize: CGFloat(AppSettings.shared.menuLabelFontSize), maxAngle: (a2 - a1) * 0.92,
                         opacity: (isSelected ? 1.0 : 0.8) * actLabelAlpha
                     )
 
@@ -444,8 +483,25 @@ private struct OverlayRadialView: View {
         )
     }
 
-    /// Draw a slice label, wrapping onto two curved lines when a multi-word
-    /// label doesn't fit its slice arc at full size.
+    /// Draw an application's own icon rotated to follow the arc at the given angle.
+    private func drawRotatedAppIcon(
+        _ image: NSImage,
+        context: GraphicsContext,
+        at point: CGPoint,
+        angle: CGFloat,
+        size: CGFloat,
+        opacity: Double
+    ) {
+        let rotation = sin(angle) <= 0 ? angle + .pi / 2 : angle - .pi / 2
+        var iconCtx = context
+        iconCtx.opacity = opacity
+        iconCtx.translateBy(x: point.x, y: point.y)
+        iconCtx.rotate(by: .radians(rotation))
+        let rect = CGRect(x: -size / 2, y: -size / 2, width: size, height: size)
+        iconCtx.draw(Image(nsImage: image), in: rect)
+    }
+
+    /// Draw a slice label, wrapping onto two curved lines when enabled and needed.
     private func drawCurvedLabel(
         _ text: String,
         context: GraphicsContext,
@@ -456,24 +512,14 @@ private struct OverlayRadialView: View {
         maxAngle: CGFloat,
         opacity: Double
     ) {
-        let fitsOneLine = (fontSize * 0.55 * CGFloat(text.count)) / radius <= maxAngle
-        let words = text.split(separator: " ").map(String.init)
+        let fitsOneLine = estimatedTextWidth(Array(text), size: fontSize) / radius <= maxAngle
 
-        if !fitsOneLine && words.count >= 2 {
-            // Balanced two-line split at a word boundary.
-            var line1 = words[0], line2 = words[1...].joined(separator: " ")
-            var bestDiff = abs(line1.count - line2.count)
-            for k in 2..<words.count {
-                let l1 = words[0..<k].joined(separator: " ")
-                let l2 = words[k...].joined(separator: " ")
-                let diff = abs(l1.count - l2.count)
-                if diff < bestDiff { bestDiff = diff; line1 = l1; line2 = l2 }
-            }
-            // Visually-top line: larger radius on the upper half of the ring,
-            // smaller radius on the lower half (where glyphs are flipped).
+        if AppSettings.shared.menuLabelWrappingEnabled,
+           !fitsOneLine,
+           let (line1, line2) = splitLabelForWrapping(text) {
             let flipped = sin(midAngle) > 0
             let dr = fontSize * 0.62
-            let lineSize = fontSize - 1
+            let lineSize = max(8, fontSize - 1)
             drawCurvedText(flipped ? line2 : line1, context: context, center: center,
                            radius: radius + dr, midAngle: midAngle,
                            fontSize: lineSize, maxAngle: maxAngle, opacity: opacity)
@@ -486,6 +532,33 @@ private struct OverlayRadialView: View {
         drawCurvedText(text, context: context, center: center,
                        radius: radius, midAngle: midAngle,
                        fontSize: fontSize, maxAngle: maxAngle, opacity: opacity)
+    }
+
+    private func splitLabelForWrapping(_ text: String) -> (String, String)? {
+        let words = text.split(separator: " ").map(String.init)
+        if words.count >= 2 {
+            var best = (words[0], words[1...].joined(separator: " "))
+            var bestDiff = abs(estimatedTextUnits(Array(best.0)) - estimatedTextUnits(Array(best.1)))
+            for k in 2..<words.count {
+                let line1 = words[0..<k].joined(separator: " ")
+                let line2 = words[k...].joined(separator: " ")
+                let diff = abs(estimatedTextUnits(Array(line1)) - estimatedTextUnits(Array(line2)))
+                if diff < bestDiff { bestDiff = diff; best = (line1, line2) }
+            }
+            return best
+        }
+
+        let chars = Array(text)
+        guard chars.count >= 2 else { return nil }
+        var bestIndex = 1
+        var bestDiff = CGFloat.greatestFiniteMagnitude
+        for index in 1..<chars.count {
+            let left = estimatedTextUnits(Array(chars[..<index]))
+            let right = estimatedTextUnits(Array(chars[index...]))
+            let diff = abs(left - right)
+            if diff < bestDiff { bestDiff = diff; bestIndex = index }
+        }
+        return (String(chars[..<bestIndex]), String(chars[bestIndex...]))
     }
 
     private func drawCurvedText(
@@ -501,40 +574,52 @@ private struct OverlayRadialView: View {
         var chars = Array(text)
         guard !chars.isEmpty, maxAngle > 0 else { return }
 
-        // ── Auto-fit: shrink the font until the text fits the slice arc, ──
-        // ── down to a minimum size; then truncate with an ellipsis.      ──
         let minFontSize: CGFloat = 8
-        func arcAngle(charCount: Int, size: CGFloat) -> CGFloat {
-            (size * 0.55 * CGFloat(charCount)) / radius
+        func arcAngle(_ chars: [Character], size: CGFloat) -> CGFloat {
+            estimatedTextWidth(chars, size: size) / radius
         }
         var size = fontSize
-        if arcAngle(charCount: chars.count, size: size) > maxAngle {
-            let fitted = maxAngle * radius / (0.55 * CGFloat(chars.count))
+        let units = estimatedTextUnits(chars)
+        if units > 0, arcAngle(chars, size: size) > maxAngle {
+            let fitted = maxAngle * radius / units
             size = max(minFontSize, fitted)
         }
-        if arcAngle(charCount: chars.count, size: size) > maxAngle {
-            let maxChars = max(2, Int(maxAngle * radius / (0.55 * size)))
-            if maxChars < chars.count {
-                chars = Array(chars.prefix(maxChars - 1)) + ["\u{2026}"]
+        if arcAngle(chars, size: size) > maxAngle {
+            let maxUnits = maxAngle * radius / size
+            let ellipsis: Character = "\u{2026}"
+            let ellipsisUnits = glyphWidthUnits(ellipsis)
+            var kept: [Character] = []
+            var usedUnits: CGFloat = 0
+            for char in chars {
+                let nextUnits = glyphWidthUnits(char)
+                if usedUnits + nextUnits + ellipsisUnits > maxUnits { break }
+                kept.append(char)
+                usedUnits += nextUnits
+            }
+            if kept.count < chars.count {
+                chars = kept.isEmpty ? [ellipsis] : kept + [ellipsis]
             }
         }
 
-        let charWidth: CGFloat = size * 0.55
-        let totalAngle = (charWidth * CGFloat(chars.count)) / radius
+        let totalWidth = estimatedTextWidth(chars, size: size)
+        let totalAngle = totalWidth / radius
         let readsCW = sin(midAngle) <= 0
+        var consumedWidth: CGFloat = 0
 
-        for (i, char) in chars.enumerated() {
-            let t = (CGFloat(i) + 0.5) / CGFloat(chars.count)
+        for char in chars {
+            let charWidth = glyphWidthUnits(char) * size
+            let centerOffset = consumedWidth + charWidth / 2
             let charAngle: CGFloat
             let rotation: CGFloat
 
             if readsCW {
-                charAngle = midAngle - totalAngle / 2 + t * totalAngle
+                charAngle = midAngle - totalAngle / 2 + centerOffset / radius
                 rotation = charAngle + .pi / 2
             } else {
-                charAngle = midAngle + totalAngle / 2 - t * totalAngle
+                charAngle = midAngle + totalAngle / 2 - centerOffset / radius
                 rotation = charAngle - .pi / 2
             }
+            consumedWidth += charWidth
 
             let pt = CGPoint(
                 x: center.x + radius * cos(charAngle),
@@ -550,6 +635,35 @@ private struct OverlayRadialView: View {
                     .foregroundStyle(.white.opacity(opacity)),
                 at: .zero
             )
+        }
+    }
+
+    private func estimatedTextWidth(_ chars: [Character], size: CGFloat) -> CGFloat {
+        estimatedTextUnits(chars) * size
+    }
+
+    private func estimatedTextUnits(_ chars: [Character]) -> CGFloat {
+        chars.reduce(CGFloat(0)) { $0 + glyphWidthUnits($1) }
+    }
+
+    private func glyphWidthUnits(_ char: Character) -> CGFloat {
+        if char.isWhitespace { return 0.35 }
+        if char.unicodeScalars.contains(where: isWideGlyphScalar) { return 1.0 }
+        if char.unicodeScalars.allSatisfy({ CharacterSet.punctuationCharacters.contains($0) }) { return 0.45 }
+        return 0.55
+    }
+
+    private func isWideGlyphScalar(_ scalar: UnicodeScalar) -> Bool {
+        switch scalar.value {
+        case 0x1100...0x11FF,
+             0x2E80...0xA4CF,
+             0xAC00...0xD7AF,
+             0xF900...0xFAFF,
+             0xFE10...0xFE6F,
+             0xFF00...0xFFEF:
+            return true
+        default:
+            return false
         }
     }
 

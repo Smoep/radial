@@ -2,7 +2,8 @@ import AppKit
 import CoreGraphics
 import os
 
-private let mouseLog = Logger(subsystem: "com.jos.pinch-control-3d", category: "mouse")
+private let mouseLog = Logger(subsystem: "com.jos.radial", category: "mouse")
+private let mouseCandidateMoveCancelThreshold: CGFloat = 80
 
 /// Standalone mouse-button trigger for the radial overlay.
 ///
@@ -89,7 +90,12 @@ final class MouseTriggerService {
     private var triggerButton: Int { settings?.mouseButton.buttonNumber ?? 2 }
 
     private func handleDown(button: Int) {
-        guard settings?.mouseEnabled == true else { return }
+        guard settings?.mouseEnabled == true else {
+            if button == triggerButton {
+                mouseLog.info("mouse down ignored — mouse trigger disabled")
+            }
+            return
+        }
 
         // ── Already engaged: confirm or dismiss ──
         if isEngaged?() == true {
@@ -109,11 +115,20 @@ final class MouseTriggerService {
         guard button == triggerButton else { return }
 
         // Left button: ensure it's a real mouse click, not a trackpad tap/click.
-        if triggerButton == MouseButton.left.buttonNumber, hasTrackpadContact?() == true { return }
+        if triggerButton == MouseButton.left.buttonNumber, hasTrackpadContact?() == true {
+            mouseLog.info("mouse down ignored — left trigger with trackpad contact")
+            return
+        }
 
         // Typing suppression / other guards.
-        if canActivate?() == false { return }
-        if isMouseOverOwnWindow() { return }
+        if canActivate?() == false {
+            mouseLog.info("mouse down ignored — typing suppression active")
+            return
+        }
+        if isMouseOverOwnWindow() {
+            mouseLog.info("mouse down ignored — cursor over Radial window")
+            return
+        }
 
         let hold = settings?.mouseHoldDuration ?? 0
         armedButton = button
@@ -142,7 +157,7 @@ final class MouseTriggerService {
 
         // Released before the hold threshold → cancel.
         if candidateInProgress {
-            resetCandidate()
+            resetCandidate(reason: "released before hold threshold")
             return
         }
 
@@ -160,7 +175,7 @@ final class MouseTriggerService {
         candidateMoveDistance += abs(screenLoc.x - lastCandidateScreen.x)
                               +  abs(screenLoc.y - lastCandidateScreen.y)
         lastCandidateScreen = screenLoc
-        if candidateMoveDistance > 3 { resetCandidate() }
+        if candidateMoveDistance > mouseCandidateMoveCancelThreshold { resetCandidate(reason: "moved \(Double(candidateMoveDistance))pt during hold") }
     }
 
     // MARK: - Hold timer
@@ -170,11 +185,16 @@ final class MouseTriggerService {
         let capturedID = holdTimerID
         DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
             guard let self, self.holdTimerID == capturedID, self.candidateInProgress else { return }
-            if self.canActivate?() == false { self.resetCandidate(); return }
+            if self.canActivate?() == false { self.resetCandidate(reason: "typing suppression at hold threshold"); return }
             self.candidateInProgress = false
             self.loadingRing.hide()
             self.onOpen?()
         }
+    }
+
+    private func resetCandidate(reason: String) {
+        mouseLog.info("mouse candidate cancelled — \(reason, privacy: .public)")
+        resetCandidate()
     }
 
     private func resetCandidate() {

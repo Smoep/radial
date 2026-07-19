@@ -453,6 +453,8 @@ struct RadialMenuEditor: View {
             return action.asMapping.displayDescription
         case .openApplication:
             return action.actionConfig.appPath ?? ""
+        case .shortcutsApp:
+            return action.actionConfig.shortcutName ?? "Shortcut"
         case .shellCommand:
             return "Shell"
         case .mediaControl:
@@ -518,9 +520,7 @@ private struct ActionListView: View {
                         .buttonStyle(.plain)
                     }
 
-                    Image(systemName: action.isSubcategory ? "folder.fill" : action.systemImage)
-                        .font(.body).foregroundStyle(action.isSubcategory ? .orange : .secondary)
-                        .frame(width: 20)
+                    rowIcon(action)
                     Text(action.label)
                         .font(.callout)
                         .fontWeight(action.isSubcategory ? .medium : .regular)
@@ -625,10 +625,29 @@ private struct ActionListView: View {
         else { expanded.insert(id) }
     }
 
+    @ViewBuilder
+    private func rowIcon(_ action: RadialAction) -> some View {
+        if !action.isSubcategory,
+           action.actionType == .openApplication,
+              action.actionConfig.useAppIcon ?? true,
+           let path = action.actionConfig.appPath,
+           let icon = AppIconCache.icon(forAppPath: path) {
+            Image(nsImage: icon)
+                .resizable()
+                .frame(width: 24, height: 24)
+                .frame(width: 28)
+        } else {
+            Image(systemName: action.isSubcategory ? "folder.fill" : action.systemImage)
+                .font(.body).foregroundStyle(action.isSubcategory ? .orange : .secondary)
+                .frame(width: 20)
+        }
+    }
+
     private func shortcutBadge(_ action: RadialAction) -> String {
         switch action.actionType {
         case .keyboardShortcut: return action.asMapping.displayDescription
         case .openApplication: return action.actionConfig.appPath ?? ""
+        case .shortcutsApp:    return action.actionConfig.shortcutName ?? "Shortcut"
         case .shellCommand:    return "Shell"
         case .mediaControl:    return action.actionConfig.mediaAction?.rawValue ?? ""
         }
@@ -711,6 +730,8 @@ private struct ActionEditorSheet: View {
     @State private var draft: RadialAction
     @State private var recorder = KeyRecorder()
     @State private var showIconPicker = false
+    @State private var shortcutNames: [String] = []
+    @State private var isLoadingShortcuts = false
     @Environment(\.dismiss) var dismiss
 
     init(path: [Int]) {
@@ -729,18 +750,19 @@ private struct ActionEditorSheet: View {
                 TextField("Action name", text: $draft.label)
                     .textFieldStyle(.roundedBorder)
             }
-            // Icon
-            HStack {
-                Text("Icon").frame(width: 70, alignment: .leading)
-                TextField("SF Symbol", text: $draft.systemImage)
-                    .textFieldStyle(.roundedBorder)
-                Button { showIconPicker = true } label: {
-                    Image(systemName: draft.systemImage)
-                        .font(.title3).frame(width: 30, height: 30)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            if shouldShowSymbolPicker {
+                HStack {
+                    Text("Icon").frame(width: 70, alignment: .leading)
+                    TextField("SF Symbol", text: $draft.systemImage)
+                        .textFieldStyle(.roundedBorder)
+                    Button { showIconPicker = true } label: {
+                        Image(systemName: draft.systemImage)
+                            .font(.title3).frame(width: 30, height: 30)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Browse icons")
                 }
-                .buttonStyle(.plain)
-                .help("Browse icons")
             }
             // Type
             HStack {
@@ -751,6 +773,11 @@ private struct ActionEditorSheet: View {
                     }
                 }
                 .labelsHidden()
+                .onChange(of: draft.actionType) { _, newType in
+                    if newType == .openApplication, draft.actionConfig.useAppIcon == nil {
+                        draft.actionConfig.useAppIcon = true
+                    }
+                }
             }
 
             Divider()
@@ -760,6 +787,7 @@ private struct ActionEditorSheet: View {
                 switch draft.actionType {
                 case .keyboardShortcut: keyboardConfig
                 case .openApplication: appConfig
+                case .shortcutsApp:    shortcutsConfig
                 case .shellCommand:    shellConfig
                 case .mediaControl:    mediaConfig
                 }
@@ -777,10 +805,15 @@ private struct ActionEditorSheet: View {
         }
         .padding(20)
         .frame(width: 400)
+        .onAppear { loadShortcutNames() }
         .onDisappear { recorder.stop() }
         .sheet(isPresented: $showIconPicker) {
             SFSymbolPicker(selectedSymbol: $draft.systemImage)
         }
+    }
+
+    private var shouldShowSymbolPicker: Bool {
+        draft.actionType != .openApplication || !(draft.actionConfig.useAppIcon ?? true)
     }
 
     // MARK: Keyboard config
@@ -840,32 +873,121 @@ private struct ActionEditorSheet: View {
     // MARK: App config
 
     private var appConfig: some View {
-        HStack {
-            Text("App").frame(width: 70, alignment: .leading)
-            Text(draft.actionConfig.appPath ?? "No app selected")
-                .font(.callout)
-                .foregroundStyle(draft.actionConfig.appPath == nil ? .secondary : .primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer()
-            Button("Browse…") {
-                let panel = NSOpenPanel()
-                panel.title = "Choose Application"
-                panel.allowedContentTypes = [.application]
-                panel.directoryURL = URL(fileURLWithPath: "/Applications")
-                panel.allowsMultipleSelection = false
-                panel.canChooseDirectories = false
-                panel.canChooseFiles = true
-                if panel.runModal() == .OK, let url = panel.url {
-                    draft.actionConfig.appPath = url.path
-                    // Auto-fill label from app name if still default
-                    if draft.label == "New Action" {
-                        draft.label = url.deletingPathExtension().lastPathComponent
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("App").frame(width: 70, alignment: .leading)
+                Text(draft.actionConfig.appPath ?? "No app selected")
+                    .font(.callout)
+                    .foregroundStyle(draft.actionConfig.appPath == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button("Browse…") {
+                    let panel = NSOpenPanel()
+                    panel.title = "Choose Application"
+                    panel.allowedContentTypes = [.application]
+                    panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                    panel.allowsMultipleSelection = false
+                    panel.canChooseDirectories = false
+                    panel.canChooseFiles = true
+                    if panel.runModal() == .OK, let url = panel.url {
+                        draft.actionConfig.appPath = url.path
+                        // Auto-fill label from app name if still default
+                        if draft.label == "New Action" {
+                            draft.label = url.deletingPathExtension().lastPathComponent
+                        }
                     }
                 }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
+
+            HStack(spacing: 8) {
+                Spacer().frame(width: 70)
+                Toggle("Use app's own icon", isOn: Binding(
+                    get: { draft.actionConfig.useAppIcon ?? true },
+                    set: { draft.actionConfig.useAppIcon = $0 }
+                ))
+                .disabled(draft.actionConfig.appPath == nil)
+                Spacer()
+                if draft.actionConfig.useAppIcon ?? true,
+                   let path = draft.actionConfig.appPath,
+                   let icon = AppIconCache.icon(forAppPath: path) {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 30, height: 30)
+                }
+            }
         }
+    }
+
+    // MARK: Shortcuts config
+
+    private var shortcutsConfig: some View {
+        HStack {
+            Text("Shortcut").frame(width: 70, alignment: .leading)
+            Picker("", selection: Binding(
+                get: { draft.actionConfig.shortcutName ?? "" },
+                set: { name in
+                    draft.actionConfig.shortcutName = name
+                    if !name.isEmpty, draft.label == "New Action" || draft.label == "?" {
+                        draft.label = name
+                    }
+                }
+            )) {
+                Text(isLoadingShortcuts ? "Loading…" : "Select Shortcut").tag("")
+                ForEach(shortcutPickerOptions, id: \.self) { name in
+                    Text(name).tag(name)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+
+            Button("Refresh") { loadShortcutNames(force: true) }
+                .disabled(isLoadingShortcuts)
+        }
+    }
+
+    private var shortcutPickerOptions: [String] {
+        let current = draft.actionConfig.shortcutName ?? ""
+        if current.isEmpty || shortcutNames.contains(current) { return shortcutNames }
+        return [current] + shortcutNames
+    }
+
+    private func loadShortcutNames(force: Bool = false) {
+        guard force || shortcutNames.isEmpty else { return }
+        guard !isLoadingShortcuts else { return }
+        isLoadingShortcuts = true
+        Task {
+            let names = await Self.fetchShortcutNames()
+            await MainActor.run {
+                shortcutNames = names
+                isLoadingShortcuts = false
+            }
+        }
+    }
+
+    private static func fetchShortcutNames() async -> [String] {
+        await Task.detached {
+            let process = Process()
+            let pipe = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+            process.arguments = ["list"]
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            do {
+                try process.run()
+                process.waitUntilExit()
+                guard process.terminationStatus == 0 else { return [] }
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                guard let output = String(data: data, encoding: .utf8) else { return [] }
+                return output
+                    .split(separator: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            } catch {
+                return []
+            }
+        }.value
     }
 
     // MARK: Shell config

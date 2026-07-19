@@ -6,6 +6,7 @@ import Observation
 enum ActionType: String, Codable, CaseIterable {
     case keyboardShortcut = "Keyboard Shortcut"
     case openApplication  = "Open Application"
+    case shortcutsApp     = "Shortcuts App"
     case shellCommand     = "Shell Command"
     case mediaControl     = "Media Control"
 }
@@ -38,6 +39,9 @@ struct ActionMapping: Codable, Identifiable, Equatable {
     // Open application
     var appPath: String = ""
 
+    // macOS Shortcuts app
+    var shortcutName: String = ""
+
     // Shell command
     var shellCommand: String = ""
 
@@ -57,6 +61,8 @@ struct ActionMapping: Codable, Identifiable, Equatable {
         case .openApplication:
             let name = URL(fileURLWithPath: appPath).deletingPathExtension().lastPathComponent
             return name.isEmpty ? appPath : name
+        case .shortcutsApp:
+            return shortcutName.isEmpty ? "Shortcut" : shortcutName
         case .shellCommand:
             let preview = shellCommand.prefix(25)
             return shellCommand.count > 25 ? "\(preview)…" : String(preview)

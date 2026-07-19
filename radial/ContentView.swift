@@ -233,6 +233,21 @@ struct ContentView: View {
 
             Divider().padding(.vertical, 2)
 
+            SettingsSlider("Label Font Size",
+                value: Binding(get: { engine.settings.menuLabelFontSize },
+                               set: { engine.settings.menuLabelFontSize = $0 }),
+                range: 8...18, step: 1, format: "%.0f pt",
+                caption: "Text size for labels inside the radial menu")
+
+            Divider().padding(.vertical, 2)
+
+            SettingsToggle("Wrap Labels",
+                isOn: Binding(get: { engine.settings.menuLabelWrappingEnabled },
+                              set: { engine.settings.menuLabelWrappingEnabled = $0 }),
+                caption: "Allows long labels to use two curved lines")
+
+            Divider().padding(.vertical, 2)
+
             SettingsSlider("Overlay Opacity",
                 value: Binding(get: { engine.settings.overlayOpacity * 100 },
                                set: { engine.settings.overlayOpacity = $0 / 100 }),
@@ -271,7 +286,7 @@ struct ContentView: View {
                               set: { engine.settings.isTestMode = $0 }),
                 caption: engine.settings.isTestMode
                     ? "⚠ Actions suppressed — menu works but nothing executes"
-                    : "Simulates the menu without executing any actions")
+                    : "Actions execute normally")
         }
     }
 }

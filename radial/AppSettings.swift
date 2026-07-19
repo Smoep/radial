@@ -52,6 +52,8 @@ enum ActivationTrigger: String, CaseIterable, Identifiable {
 final class AppSettings {
 
     private var saveTimer: Timer?
+    private static let legacyDefaultsSuite = "com.jos.radial-tree"
+    private static let migratedLegacyDefaultsKey = "migratedDefaultsFromRadialTree"
 
     private func scheduleSave() {
         saveTimer?.invalidate()
@@ -71,6 +73,8 @@ final class AppSettings {
         d.set(activationMargin, forKey: "activationMargin")
         d.set(ringHeight, forKey: "ringHeight")
         d.set(selectionWidth, forKey: "selectionWidth")
+        d.set(menuLabelFontSize, forKey: "menuLabelFontSize")
+        d.set(menuLabelWrappingEnabled, forKey: "menuLabelWrappingEnabled")
         d.set(categoryFlexibilityPercent, forKey: "categoryFlexibilityPercent")
         d.set(pauseWhileTyping, forKey: "pauseWhileTyping")
         d.set(activationTrigger.rawValue, forKey: "activationTrigger")
@@ -103,7 +107,7 @@ final class AppSettings {
     // MARK: - Mouse trigger
 
     /// Whether the mouse-button trigger is active.
-    var mouseEnabled: Bool = false {
+    var mouseEnabled: Bool = true {
         didSet { scheduleSave() }
     }
 
@@ -156,7 +160,7 @@ final class AppSettings {
     }
 
     /// When true, system actions are suppressed; safe for testing.
-    var isTestMode: Bool = true {
+    var isTestMode: Bool = false {
         didSet { scheduleSave() }
     }
 
@@ -177,8 +181,18 @@ final class AppSettings {
         didSet { scheduleSave() }
     }
 
+    /// Font size for labels drawn in radial menu slices.
+    var menuLabelFontSize: Double = 11 {
+        didSet { scheduleSave() }
+    }
+
+    /// When true, slice labels may wrap onto two curved lines.
+    var menuLabelWrappingEnabled: Bool = true {
+        didSet { scheduleSave() }
+    }
+
     /// Percentage of the first ring where the selected category can still change.
-    var categoryFlexibilityPercent: Double = 0 {
+    var categoryFlexibilityPercent: Double = 40 {
         didSet { scheduleSave() }
     }
 
@@ -268,6 +282,7 @@ final class AppSettings {
     static let shared = AppSettings()
 
     private init() {
+        Self.migrateLegacyDefaultsIfNeeded()
         let d = UserDefaults.standard
         if let v = d.object(forKey: "activationHoldDuration") as? Double { activationHoldDuration = v }
         if let v = d.object(forKey: "gridDivisions")     as? Int    { gridDivisions     = v }
@@ -278,6 +293,8 @@ final class AppSettings {
         if let v = d.object(forKey: "activationMargin")  as? Double { activationMargin  = v }
         if let v = d.object(forKey: "ringHeight")        as? Double { ringHeight        = v }
         if let v = d.object(forKey: "selectionWidth")    as? Double { selectionWidth    = v }
+        if let v = d.object(forKey: "menuLabelFontSize") as? Double { menuLabelFontSize = min(max(v, 8), 18) }
+        if let v = d.object(forKey: "menuLabelWrappingEnabled") as? Bool { menuLabelWrappingEnabled = v }
         if let v = d.object(forKey: "categoryFlexibilityPercent") as? Double {
             categoryFlexibilityPercent = min(max(v, 0), 50)
         }
@@ -298,5 +315,37 @@ final class AppSettings {
            let b = MouseButton(rawValue: v)                       { mouseButton     = b }
         if let v = d.object(forKey: "mouseHoldDuration") as? Double { mouseHoldDuration = v }
         if let v = d.object(forKey: "mouseReleaseToSelect") as? Bool { mouseReleaseToSelect = v }
+    }
+
+    private static func migrateLegacyDefaultsIfNeeded() {
+        let current = UserDefaults.standard
+        guard current.bool(forKey: migratedLegacyDefaultsKey) == false,
+              let legacy = UserDefaults(suiteName: legacyDefaultsSuite),
+              legacy.object(forKey: "radialMenuCategories") != nil else { return }
+
+        let keys = [
+            "activationHoldDuration", "gridDivisions", "dragRange", "ringDelay",
+            "liftToSelect", "isTestMode", "activationMargin", "ringHeight",
+            "selectionWidth", "menuLabelFontSize", "menuLabelWrappingEnabled",
+            "categoryFlexibilityPercent", "pauseWhileTyping",
+            "activationTrigger", "overlayOpacity", "hotkeyEnabled", "hotkeyKeyCode",
+            "hotkeyModifiers", "hotkeyKeyLabel", "hotkeyMode", "doubleTapWindow",
+            "trackpadEnabled", "mouseEnabled", "mouseButton", "mouseHoldDuration",
+            "mouseReleaseToSelect", "radialMenuCategories"
+        ]
+        for key in keys {
+            guard let value = legacy.object(forKey: key) else { continue }
+            if key == "radialMenuCategories" {
+                let currentData = current.data(forKey: key)
+                let legacyData = value as? Data
+                if (legacyData?.count ?? 0) > (currentData?.count ?? 0) {
+                    current.set(value, forKey: key)
+                }
+                continue
+            }
+            guard current.object(forKey: key) == nil else { continue }
+            current.set(value, forKey: key)
+        }
+        current.set(true, forKey: migratedLegacyDefaultsKey)
     }
 }

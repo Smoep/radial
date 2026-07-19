@@ -9,8 +9,23 @@ enum ActionExecutor {
         switch mapping.actionType {
         case .keyboardShortcut: sendKeyboardShortcut(mapping)
         case .openApplication: openApplication(mapping.appPath)
+        case .shortcutsApp:    runShortcut(named: mapping.shortcutName)
         case .shellCommand:    runShellCommand(mapping.shellCommand)
         case .mediaControl:    sendMediaKey(mapping.mediaAction)
+        }
+    }
+
+    // MARK: - Shortcuts App
+
+    private static func runShortcut(named name: String) {
+        guard !name.isEmpty else { return }
+        Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+            process.arguments = ["run", name]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try? process.run()
         }
     }
 

@@ -213,7 +213,7 @@ final class SessionEngine {
         mouse.settings           = settings
         mouse.isEngaged          = { [weak self] in self?.trackpad.isEngaged ?? false }
         mouse.hasTrackpadContact = { [weak self] in self?.trackpad.hasFingerContact ?? false }
-        mouse.canActivate        = { [weak self] in (self?.isPausedForTyping ?? false) == false }
+        mouse.canActivate        = { true }
         mouse.onOpen             = { [weak self] in self?.trackpad.engage(external: true) }
         mouse.onDismiss          = { [weak self] in self?.dismissOverlay() }
         mouse.onSelect           = { [weak self] in self?.trackpad.triggerExternalRelease() }

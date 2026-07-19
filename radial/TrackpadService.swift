@@ -4,7 +4,7 @@ import CoreGraphics
 import Darwin
 import os
 
-private let tzLog = Logger(subsystem: "com.jos.pinch-control-3d", category: "trackpad")
+private let tzLog = Logger(subsystem: "com.jos.radial", category: "trackpad")
 
 // MARK: - MultitouchSupport private framework bridge
 
@@ -26,6 +26,7 @@ private let positionOffset = 32 // byte offset to normalized (x, y) pair
 /// Minimum instantaneous MT contact size for a leftMouseDown to count as a real
 /// physical click (finger pressed on pad) rather than a tap-to-click tap (~0).
 private let clickFingerPresenceThreshold: Float = 0.3
+private let candidateMoveCancelThreshold: CGFloat = 80
 
 private let mtLib: UnsafeMutableRawPointer? = {
     dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_LAZY)
@@ -148,8 +149,10 @@ final class TrackpadService {
     private var peakFingerDensity: Float = 0
     /// Candidate hold timer ID — cancelled on movement or finger lift.
     private var holdTimerID: UInt = 0
-    /// Cumulative cursor movement during candidate phase.
+    /// Cursor displacement during candidate phase.
     private var candidateMoveDistance: CGFloat = 0
+    /// Screen position where the candidate hold began.
+    private var candidateStartScreen: CGPoint = .zero
     /// Last screen position for computing deltas during candidate.
     private var lastCandidateScreen: CGPoint = .zero
     /// Cursor position when finger touched down while engaged (for tap detection).
@@ -267,22 +270,31 @@ final class TrackpadService {
                 let margin = CGFloat((settings?.activationMargin ?? 0) / 100.0)
                 if margin > 0 {
                     if pos.x < margin || pos.x > (1 - margin) {
+                        tzLog.info("candidate blocked — activation zone x=\(Double(pos.x), privacy: .public) margin=\(Double(margin), privacy: .public)")
                         return  // touch outside activation zone
                     }
                 }
             }
 
             // Respect trackpad-trigger toggle.
-            if settings?.trackpadEnabled == false { return }
+            if settings?.trackpadEnabled == false {
+                tzLog.info("candidate blocked — trackpad trigger disabled")
+                return
+            }
 
             // Suppress if typing is active.
-            if shouldSuppressActivation?() == true { return }
+            if shouldSuppressActivation?() == true {
+                tzLog.info("candidate blocked — typing suppression active")
+                return
+            }
 
             fingerDown = true
             candidateMoveDistance = 0
             let nsLoc = NSEvent.mouseLocation
             if let screen = NSScreen.main {
-                lastCandidateScreen = CGPoint(x: nsLoc.x, y: screen.frame.height - nsLoc.y)
+                let screenPoint = CGPoint(x: nsLoc.x, y: screen.frame.height - nsLoc.y)
+                candidateStartScreen = screenPoint
+                lastCandidateScreen = screenPoint
             }
             let trigger = settings?.activationTrigger ?? .tapToClick
             if trigger == .tapToClick {
@@ -322,13 +334,13 @@ final class TrackpadService {
                 }
                 // Don't disengage.
             } else {
-                cancelCandidate()
+                cancelCandidate(reason: "finger lifted before engage")
             }
         }
         // 1 → 2+: extra fingers during candidate → cancel (multi-finger gesture).
         else if prev == 1 && fingerCount > 1 && fingerDown && !isEngaged {
             print("[TrackpadService] MT: multi-finger (\(prev)→\(fingerCount)), cancelling")
-            cancelCandidate()
+            cancelCandidate(reason: "multi-finger")
         }
     }
 
@@ -339,25 +351,24 @@ final class TrackpadService {
 
         case .mouseMoved:
             if fingerDown && !isEngaged {
-                let loc = event.locationInWindow  // CGPoint in screen coords via global monitor
                 let screenLoc = CGPoint(x: event.cgEvent?.location.x ?? 0,
                                        y: event.cgEvent?.location.y ?? 0)
-                let dx = abs(screenLoc.x - lastCandidateScreen.x)
-                let dy = abs(screenLoc.y - lastCandidateScreen.y)
-                candidateMoveDistance += dx + dy
+                let dx = screenLoc.x - candidateStartScreen.x
+                let dy = screenLoc.y - candidateStartScreen.y
+                candidateMoveDistance = sqrt(dx * dx + dy * dy)
                 lastCandidateScreen = screenLoc
-                if candidateMoveDistance > 3 { cancelCandidate() }
+                if candidateMoveDistance > candidateMoveCancelThreshold { cancelCandidate(reason: "mouse moved \(Double(candidateMoveDistance))pt during hold") }
             }
 
         case .leftMouseDragged:
             if fingerDown && !isEngaged {
                 let screenLoc = CGPoint(x: event.cgEvent?.location.x ?? 0,
                                        y: event.cgEvent?.location.y ?? 0)
-                let dx = abs(screenLoc.x - lastCandidateScreen.x)
-                let dy = abs(screenLoc.y - lastCandidateScreen.y)
-                candidateMoveDistance += dx + dy
+                let dx = screenLoc.x - candidateStartScreen.x
+                let dy = screenLoc.y - candidateStartScreen.y
+                candidateMoveDistance = sqrt(dx * dx + dy * dy)
                 lastCandidateScreen = screenLoc
-                if candidateMoveDistance > 3 { cancelCandidate() }
+                if candidateMoveDistance > candidateMoveCancelThreshold { cancelCandidate(reason: "left drag moved \(Double(candidateMoveDistance))pt during hold") }
             }
 
         case .leftMouseDown:
@@ -375,7 +386,9 @@ final class TrackpadService {
                     candidateMoveDistance = 0
                     let nsLoc = NSEvent.mouseLocation
                     if let screen = NSScreen.main {
-                        lastCandidateScreen = CGPoint(x: nsLoc.x, y: screen.frame.height - nsLoc.y)
+                        let screenPoint = CGPoint(x: nsLoc.x, y: screen.frame.height - nsLoc.y)
+                        candidateStartScreen = screenPoint
+                        lastCandidateScreen = screenPoint
                     }
                     let holdDur = settings?.activationHoldDuration ?? 0.6
                     let ringDel = settings?.ringDelay ?? 0.25
@@ -385,8 +398,8 @@ final class TrackpadService {
                 }
                 return
             }
-            // tapToClick: a click during the hold cancels activation.
-            if fingerDown && trigger == .tapToClick { cancelCandidate() }
+            // tap-to-click can produce a leftMouseDown while the finger is still holding.
+            if fingerDown && trigger == .tapToClick { return }
 
         case .leftMouseUp:
             // Can't swallow with global monitor — event reaches its target regardless.
@@ -398,7 +411,7 @@ final class TrackpadService {
 
         case .scrollWheel:
             if isEngaged { return }
-            if fingerDown { cancelCandidate() }
+            if fingerDown { cancelCandidate(reason: "scroll wheel during hold") }
 
         default:
             break
@@ -417,14 +430,15 @@ final class TrackpadService {
             guard self.fingerDown, !self.isEngaged else { return }
             // Check if activation should be suppressed (e.g. typing).
             if self.shouldSuppressActivation?() == true {
-                self.cancelCandidate()
+                self.cancelCandidate(reason: "typing suppression at hold threshold")
                 return
             }
             self.engage()
         }
     }
 
-    private func cancelCandidate() {
+    private func cancelCandidate(reason: String) {
+        tzLog.info("candidate cancelled — \(reason, privacy: .public)")
         holdTimerID &+= 1
         fingerDown = false
         candidateOverlay.hide()

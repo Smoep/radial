@@ -24,6 +24,11 @@ struct RadialAction: Codable, Identifiable {
         var useControl: Bool?
         // App launch
         var appPath: String?
+        /// When true, an Open Application action shows the app's own icon
+        /// instead of the chosen SF Symbol.
+        var useAppIcon: Bool?
+        // macOS Shortcuts app
+        var shortcutName: String?
         // Shell command
         var shellCommand: String?
         // Media
@@ -41,6 +46,7 @@ struct RadialAction: Codable, Identifiable {
         m.useOption   = actionConfig.useOption ?? false
         m.useControl  = actionConfig.useControl ?? false
         m.appPath     = actionConfig.appPath ?? ""
+        m.shortcutName = actionConfig.shortcutName ?? ""
         m.shellCommand = actionConfig.shellCommand ?? ""
         m.mediaAction = actionConfig.mediaAction ?? .playPause
         return m
@@ -290,6 +296,24 @@ final class RadialMenuStore {
                 RadialAction(id: "sys.lock", label: "Lock Screen", systemImage: "lock.fill",
                              actionType: .keyboardShortcut,
                              actionConfig: .init(keyCode: 12, keyChar: "q", keyLabel: "Q", useCommand: true, useControl: true)),
+            ]
+        ),
+        RadialCategory(
+            id: "chinese-test", label: "中文测试", systemImage: "character.bubble.fill",
+            colorHex: "#00A6A6",
+            actions: [
+                RadialAction(id: "chinese-test.settings", label: "设置", systemImage: "gearshape.fill",
+                             actionType: .openApplication,
+                             actionConfig: .init(appPath: "System Settings")),
+                RadialAction(id: "chinese-test.browser", label: "打开浏览器", systemImage: "safari.fill",
+                             actionType: .openApplication,
+                             actionConfig: .init(appPath: "Safari")),
+                RadialAction(id: "chinese-test.music", label: "音乐播放控制", systemImage: "playpause.fill",
+                             actionType: .mediaControl,
+                             actionConfig: .init(mediaAction: .playPause)),
+                RadialAction(id: "chinese-test.duplicate-tab", label: "复制当前标签页", systemImage: "rectangle.on.rectangle",
+                             actionType: .shortcutsApp,
+                             actionConfig: .init(shortcutName: "Duplicate Tab")),
             ]
         ),
     ]

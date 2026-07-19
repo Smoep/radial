@@ -1,4 +1,4 @@
-# Track Zone — Lessons Learned
+# Radial — Lessons Learned
 
 Short, practical notes. Only confirmed, tested things.
 
@@ -50,8 +50,8 @@ Copies entire array every tick. Fix: mutate in-place.
 **Codesigning after deploying to `/Applications/`**
 Invalidates accessibility permissions — macOS sees it as a new app identity. Never re-codesign a deployed binary.
 
-**Changing the bundle ID**
-Breaks previously granted accessibility permissions. Bundle ID is `com.jos.pinch-control-3d` — do not touch.
+**Changing the bundle ID after release**
+Breaks previously granted accessibility permissions. Treat `com.jos.radial` as stable once shipped.
 
 **AppleScript for keyboard shortcuts**
 ~100 ms latency. Fix: CGEvent for all keyboard posting (instant).
@@ -68,10 +68,10 @@ Doesn't work globally. Must use `MultitouchSupport.framework` via dlopen.
 
 **Build Release:**
 ```bash
-cd /Users/jos/Downloads/apple_data/track_zone
+cd /Users/jos/projects/mac/radial
 
-xcodebuild -project pinch_control.xcodeproj \
-           -scheme pinch_control \
+xcodebuild -project radial.xcodeproj \
+           -scheme radial \
            -configuration Release \
            -derivedDataPath build-release \
            build 2>&1 | grep -E "error:|BUILD" | head -20
@@ -79,22 +79,22 @@ xcodebuild -project pinch_control.xcodeproj \
 
 **Deploy:**
 ```bash
-pkill -9 "Track Zone" 2>/dev/null
+pkill -9 "Radial" 2>/dev/null
 sleep 0.5
-rm -rf "/Applications/Track Zone.app"
-cp -R "build-release/Build/Products/Release/Track Zone.app" "/Applications/Track Zone.app"
-open -a "/Applications/Track Zone.app"
+rm -rf "/Applications/Radial.app"
+cp -R "build-release/Build/Products/Release/Radial.app" "/Applications/Radial.app"
+open -a "/Applications/Radial.app"
 ```
 
 **Check CPU usage (5-second sample):**
 ```bash
-ps aux | grep "Track Zone"   # get PID
+ps aux | grep "Radial"   # get PID
 sample <PID> 5
 ```
 Good: `mach_msg2_trap` samples > 70% (idle). Bad: Timer callback or Canvas > 5%.
 
 **Add a new Swift file:**
-Drop `.swift` into `pinch_control/` folder — it auto-builds via `PBXFileSystemSynchronizedRootGroup`. No pbxproj edits needed.
+Drop `.swift` into `radial/` folder — it auto-builds via `PBXFileSystemSynchronizedRootGroup`. No pbxproj edits needed.
 
 ---
 
