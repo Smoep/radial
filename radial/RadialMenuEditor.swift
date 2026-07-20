@@ -251,6 +251,131 @@ private enum EditTarget: Identifiable {
     }
 }
 
+// MARK: - Action Drag & Drop Model
+
+private let radialEditorSpace = "radialEditorSpace"
+
+private struct RowRegion: Equatable {
+    let path: [Int]
+    let parentPath: [Int]
+    let index: Int
+    let isSubcategory: Bool
+    let frame: CGRect
+}
+
+private struct ContainerRegion: Equatable {
+    let parentPath: [Int]
+    let appendIndex: Int
+    let expandId: String
+    let frame: CGRect
+}
+
+private struct DropTarget: Equatable {
+    let parentPath: [Int]
+    let index: Int
+    let intoSubcategory: Bool
+}
+
+private struct RowRegionKey: PreferenceKey {
+    static let defaultValue: [RowRegion] = []
+    static func reduce(value: inout [RowRegion], nextValue: () -> [RowRegion]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
+private struct ContainerRegionKey: PreferenceKey {
+    static let defaultValue: [ContainerRegion] = []
+    static func reduce(value: inout [ContainerRegion], nextValue: () -> [ContainerRegion]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
+@Observable
+private final class ActionDragController {
+    @ObservationIgnored var rowRegions: [RowRegion] = []
+    @ObservationIgnored var containerRegions: [ContainerRegion] = []
+    @ObservationIgnored var sourceAction: RadialAction?
+    @ObservationIgnored var expand: (String) -> Void = { _ in }
+
+    var sourcePath: [Int]?
+    var pointer: CGPoint = .zero
+    var target: DropTarget?
+
+    var isDragging: Bool { sourcePath != nil }
+
+    func begin(path: [Int], action: RadialAction, at location: CGPoint) {
+        sourcePath = path
+        sourceAction = action
+        pointer = location
+        recomputeTarget()
+    }
+
+    func update(location: CGPoint) {
+        pointer = location
+        recomputeTarget()
+    }
+
+    private func recomputeTarget() {
+        let newTarget = computeTarget()
+        // Only write (and thus notify observers / invalidate rows) when the
+        // resolved target actually changes. The pointer moves every frame but
+        // the drop target only changes when crossing a boundary.
+        if newTarget != target { target = newTarget }
+    }
+
+    private func computeTarget() -> DropTarget? {
+        guard let source = sourcePath else { return nil }
+        let store = RadialMenuStore.shared
+        let p = pointer
+
+        // A) Drop *into* a subcategory when hovering the middle band of its row.
+        if let row = rowRegions.first(where: { $0.frame.contains(p) }), row.isSubcategory {
+            let bandHalf = row.frame.height * 0.25
+            if abs(p.y - row.frame.midY) <= bandHalf,
+               store.canMoveAction(from: source, toParentPath: row.path) {
+                let count = store.actionAt(path: row.path)?.children?.count ?? 0
+                return DropTarget(parentPath: row.path, index: count, intoSubcategory: true)
+            }
+        }
+
+        // B) Determine which list (container) the pointer is over. Prefer the
+        //    innermost (deepest) container so nested subcategories win.
+        guard let container = containerRegions
+            .filter({ $0.frame.contains(p) })
+            .sorted(by: { $0.parentPath.count > $1.parentPath.count })
+            .first,
+            store.canMoveAction(from: source, toParentPath: container.parentPath)
+        else { return nil }
+
+        // C) Insertion index = number of sibling rows whose vertical midpoint is
+        //    above the pointer. Using midpoints (instead of per-row frame
+        //    containment) avoids the gaps between rows that made the indicator
+        //    flicker down to the bottom when moving between the last items.
+        let index = rowRegions
+            .filter { $0.parentPath == container.parentPath }
+            .reduce(into: 0) { count, row in if p.y > row.frame.midY { count += 1 } }
+        return DropTarget(parentPath: container.parentPath, index: index, intoSubcategory: false)
+    }
+
+    func commit() {
+        guard let source = sourcePath, let t = target else { reset(); return }
+        let store = RadialMenuStore.shared
+        let intoId: String? = t.intoSubcategory ? store.actionAt(path: t.parentPath)?.id : nil
+        // Clear the visual drag state FIRST so the insertion line / preview
+        // disappear instantly, then perform the (unanimated) move. Resetting
+        // inside an animation made the bottom indicator fade out after release.
+        reset()
+        if let id = intoId { expand(id) }
+        _ = store.moveAction(from: source, toParentPath: t.parentPath, insertionIndex: t.index)
+    }
+
+    func reset() {
+        sourcePath = nil
+        sourceAction = nil
+        target = nil
+    }
+}
+
 // MARK: - Radial Menu Editor
 
 struct RadialMenuEditor: View {
@@ -258,9 +383,7 @@ struct RadialMenuEditor: View {
     @State private var expanded: Set<String> = []
     @State private var catDragId: String?
     @State private var catDragOffset: CGFloat = 0
-    @State private var actDragId: String?
-    @State private var actDragCatIdx: Int = 0
-    @State private var actDragOffset: CGFloat = 0
+    @State private var drag = ActionDragController()
 
     var body: some View {
         let store = RadialMenuStore.shared
@@ -337,14 +460,11 @@ struct RadialMenuEditor: View {
                     // ── Actions (when expanded) ──
                     if expanded.contains(cat.id) {
                         ActionListView(
-                            catIdx: ci,
                             actions: cat.actions,
                             path: [ci],
                             editTarget: $editTarget,
                             expanded: $expanded,
-                            actDragId: $actDragId,
-                            actDragCatIdx: $actDragCatIdx,
-                            actDragOffset: $actDragOffset,
+                            drag: drag,
                             indent: 26
                         )
 
@@ -392,6 +512,22 @@ struct RadialMenuEditor: View {
                 }
                 .padding(8)
                 .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ContainerRegionKey.self, value: [ContainerRegion(
+                            parentPath: [ci],
+                            appendIndex: cat.actions.count,
+                            expandId: cat.id,
+                            frame: geo.frame(in: .named(radialEditorSpace))
+                        )])
+                    }
+                )
+                .overlay {
+                    if drag.isDragging, drag.target?.parentPath == [ci] {
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.accentColor.opacity(0.7), lineWidth: 1.5)
+                    }
+                }
                 .offset(y: catDragId == cat.id ? catDragOffset : 0)
                 .zIndex(catDragId == cat.id ? 10 : 0)
                 .opacity(catDragId == cat.id ? 0.85 : 1)
@@ -420,6 +556,13 @@ struct RadialMenuEditor: View {
             .foregroundStyle(.blue)
             .padding(.top, 4)
         }
+        .coordinateSpace(.named(radialEditorSpace))
+        .onPreferenceChange(RowRegionKey.self) { drag.rowRegions = $0 }
+        .onPreferenceChange(ContainerRegionKey.self) { drag.containerRegions = $0 }
+        .overlay(alignment: .topLeading) {
+            FloatingDragPreview(drag: drag)
+        }
+        .onAppear { drag.expand = { id in expanded.insert(id) } }
         .sheet(item: $editTarget) { target in
             switch target {
             case .category(let idx):
@@ -446,19 +589,29 @@ struct RadialMenuEditor: View {
         if expanded.contains(id) { expanded.remove(id) }
         else { expanded.insert(id) }
     }
+}
 
-    private func shortcutBadge(_ action: RadialAction) -> String {
-        switch action.actionType {
-        case .keyboardShortcut:
-            return action.asMapping.displayDescription
-        case .openApplication:
-            return action.actionConfig.appPath ?? ""
-        case .shortcutsApp:
-            return action.actionConfig.shortcutName ?? "Shortcut"
-        case .shellCommand:
-            return "Shell"
-        case .mediaControl:
-            return action.actionConfig.mediaAction?.rawValue ?? ""
+// MARK: - Floating Drag Preview
+
+/// Isolated view so that reading `drag.pointer` every frame only invalidates
+/// this small preview, not the entire editor body (rows + GeometryReaders).
+private struct FloatingDragPreview: View {
+    let drag: ActionDragController
+
+    var body: some View {
+        if drag.isDragging, let action = drag.sourceAction {
+            HStack(spacing: 8) {
+                Image(systemName: action.isSubcategory ? "folder.fill" : action.systemImage)
+                    .foregroundStyle(action.isSubcategory ? .orange : .secondary)
+                Text(action.label).font(.callout)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor.opacity(0.5)))
+            .shadow(radius: 6, y: 3)
+            .opacity(0.95)
+            .position(drag.pointer)
+            .allowsHitTesting(false)
         }
     }
 }
@@ -466,49 +619,26 @@ struct RadialMenuEditor: View {
 // MARK: - Recursive Action List
 
 private struct ActionListView: View {
-    let catIdx: Int
     let actions: [RadialAction]
     let path: [Int]  // parent path (e.g. [catIdx] or [catIdx, actIdx])
     @Binding var editTarget: EditTarget?
     @Binding var expanded: Set<String>
-    @Binding var actDragId: String?
-    @Binding var actDragCatIdx: Int
-    @Binding var actDragOffset: CGFloat
+    let drag: ActionDragController
     let indent: CGFloat
 
     var body: some View {
         let store = RadialMenuStore.shared
         ForEach(Array(actions.enumerated()), id: \.element.id) { ai, action in
             let actionPath = path + [ai]
+            let isLast = ai == actions.count - 1
+            let intoHighlight = drag.target?.intoSubcategory == true && drag.target?.parentPath == actionPath
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Image(systemName: "line.3.horizontal")
                         .font(.system(size: 10)).foregroundStyle(.quaternary)
                         .frame(width: 16)
                         .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 6)
-                                .onChanged { value in
-                                    actDragId = action.id
-                                    actDragCatIdx = catIdx
-                                    actDragOffset = value.translation.height
-                                }
-                                .onEnded { value in
-                                    defer {
-                                        withAnimation(.easeOut(duration: 0.2)) {
-                                            actDragId = nil; actDragOffset = 0
-                                        }
-                                    }
-                                    guard let fromIdx = actions.firstIndex(where: { $0.id == action.id }) else { return }
-                                    let steps = Int(round(value.translation.height / 36))
-                                    let targetIdx = max(0, min(actions.count - 1, fromIdx + steps))
-                                    if targetIdx != fromIdx {
-                                        withAnimation(.easeInOut(duration: 0.25)) {
-                                            store.moveAction(atParentPath: path, from: fromIdx, to: targetIdx)
-                                        }
-                                    }
-                                }
-                        )
+                        .help("Drag row to move")
 
                     if action.isSubcategory {
                         Button { toggleExpand(action.id) } label: {
@@ -549,26 +679,56 @@ private struct ActionListView: View {
                 }
                 .padding(.leading, indent)
                 .padding(.vertical, 4)
+                .background(intoHighlight ? Color.accentColor.opacity(0.14) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6))
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: RowRegionKey.self, value: [RowRegion(
+                            path: actionPath,
+                            parentPath: path,
+                            index: ai,
+                            isSubcategory: action.isSubcategory,
+                            frame: geo.frame(in: .named(radialEditorSpace))
+                        )])
+                    }
+                )
+                .overlay(alignment: .top) {
+                    if let t = drag.target, !t.intoSubcategory, t.parentPath == path, t.index == ai {
+                        insertionLine
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    if isLast, let t = drag.target, !t.intoSubcategory, t.parentPath == path, t.index == ai + 1 {
+                        insertionLine
+                    }
+                }
                 .contentShape(Rectangle())
+                .opacity(drag.sourcePath == actionPath ? 0.4 : 1)
                 .onTapGesture {
                     editTarget = .action(path: actionPath)
                 }
-                .offset(y: actDragId == action.id ? actDragOffset : 0)
-                .zIndex(actDragId == action.id ? 10 : 0)
-                .opacity(actDragId == action.id ? 0.85 : 1)
-                .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.7), value: actDragOffset)
+                .gesture(
+                    DragGesture(minimumDistance: 6, coordinateSpace: .named(radialEditorSpace))
+                        .onChanged { value in
+                            if drag.sourcePath == nil {
+                                drag.begin(path: actionPath, action: action, at: value.location)
+                            } else {
+                                drag.update(location: value.location)
+                            }
+                        }
+                        .onEnded { _ in
+                            drag.commit()
+                        }
+                )
 
                 // Recursive children
                 if action.isSubcategory && expanded.contains(action.id) {
                     ActionListView(
-                        catIdx: catIdx,
                         actions: action.children ?? [],
                         path: actionPath,
                         editTarget: $editTarget,
                         expanded: $expanded,
-                        actDragId: $actDragId,
-                        actDragCatIdx: $actDragCatIdx,
-                        actDragOffset: $actDragOffset,
+                        drag: drag,
                         indent: indent + 20
                     )
 
@@ -615,9 +775,27 @@ private struct ActionListView: View {
                     }
                     .padding(.leading, indent + 24)
                     .padding(.top, 2)
+                    .padding(.vertical, 4)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: ContainerRegionKey.self, value: [ContainerRegion(
+                                parentPath: actionPath,
+                                appendIndex: action.children?.count ?? 0,
+                                expandId: action.id,
+                                frame: geo.frame(in: .named(radialEditorSpace))
+                            )])
+                        }
+                    )
                 }
             }
         }
+    }
+
+    private var insertionLine: some View {
+        Capsule()
+            .fill(Color.accentColor)
+            .frame(height: 2)
+            .padding(.leading, indent)
     }
 
     private func toggleExpand(_ id: String) {
@@ -650,6 +828,9 @@ private struct ActionListView: View {
         case .shortcutsApp:    return action.actionConfig.shortcutName ?? "Shortcut"
         case .shellCommand:    return "Shell"
         case .mediaControl:    return action.actionConfig.mediaAction?.rawValue ?? ""
+        case .automation:
+            let count = action.actionConfig.automationSteps?.count ?? 0
+            return count == 1 ? "1 step" : "\(count) steps"
         }
     }
 }
@@ -777,6 +958,11 @@ private struct ActionEditorSheet: View {
                     if newType == .openApplication, draft.actionConfig.useAppIcon == nil {
                         draft.actionConfig.useAppIcon = true
                     }
+                    if newType == .automation, (draft.actionConfig.automationSteps ?? []).isEmpty {
+                        draft.actionConfig.automationSteps = [
+                            AutomationStep(actionType: .shortcutsApp, config: .init(), delayAfterMs: 1000)
+                        ]
+                    }
                 }
             }
 
@@ -790,6 +976,7 @@ private struct ActionEditorSheet: View {
                 case .shortcutsApp:    shortcutsConfig
                 case .shellCommand:    shellConfig
                 case .mediaControl:    mediaConfig
+                case .automation:      automationConfig
                 }
             }
 
@@ -1022,6 +1209,69 @@ private struct ActionEditorSheet: View {
         }
     }
 
+    // MARK: Automation config
+
+    private var automationConfig: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Runs each step in order, waiting the set delay before the next.")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            let steps = draft.actionConfig.automationSteps ?? []
+            if steps.isEmpty {
+                Text("No steps yet — add one below.")
+                    .font(.callout).foregroundStyle(.tertiary)
+            }
+            ForEach(Array(steps.enumerated()), id: \.element.id) { idx, _ in
+                AutomationStepEditor(
+                    index: idx,
+                    step: stepBinding(idx),
+                    isLast: idx == steps.count - 1,
+                    shortcutNames: shortcutNames,
+                    isLoadingShortcuts: isLoadingShortcuts,
+                    onRefreshShortcuts: { loadShortcutNames(force: true) },
+                    onDelete: { deleteStep(idx) }
+                )
+            }
+
+            Button { addStep() } label: {
+                Label("Add Step", systemImage: "plus.circle.fill").font(.callout)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.blue)
+        }
+    }
+
+    private func stepBinding(_ index: Int) -> Binding<AutomationStep> {
+        Binding(
+            get: {
+                let steps = draft.actionConfig.automationSteps ?? []
+                return index < steps.count
+                    ? steps[index]
+                    : AutomationStep(actionType: .shortcutsApp, config: .init())
+            },
+            set: { newValue in
+                var steps = draft.actionConfig.automationSteps ?? []
+                guard index < steps.count else { return }
+                steps[index] = newValue
+                draft.actionConfig.automationSteps = steps
+            }
+        )
+    }
+
+    private func addStep() {
+        var steps = draft.actionConfig.automationSteps ?? []
+        steps.append(AutomationStep(actionType: .shortcutsApp, config: .init(), delayAfterMs: 1000))
+        draft.actionConfig.automationSteps = steps
+    }
+
+    private func deleteStep(_ index: Int) {
+        var steps = draft.actionConfig.automationSteps ?? []
+        guard index < steps.count else { return }
+        steps.remove(at: index)
+        draft.actionConfig.automationSteps = steps
+    }
+
     private func save() {
         let store = RadialMenuStore.shared
         guard store.actionAt(path: path) != nil else { return }
@@ -1030,6 +1280,192 @@ private struct ActionEditorSheet: View {
             draft.children = existing.children
         }
         store.setAction(draft, at: path)
+    }
+}
+
+// MARK: - Automation Step Editor
+
+private struct AutomationStepEditor: View {
+    let index: Int
+    @Binding var step: AutomationStep
+    let isLast: Bool
+    let shortcutNames: [String]
+    let isLoadingShortcuts: Bool
+    let onRefreshShortcuts: () -> Void
+    let onDelete: () -> Void
+
+    @State private var recorder = KeyRecorder()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Step \(index + 1)").font(.callout.weight(.semibold))
+                Spacer()
+                Picker("", selection: $step.actionType) {
+                    ForEach(ActionType.allCases.filter { $0 != .automation }, id: \.self) { t in
+                        Text(t.rawValue).tag(t)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 170)
+                Button { onDelete() } label: {
+                    Image(systemName: "trash").foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                .help("Remove step")
+            }
+
+            Group {
+                switch step.actionType {
+                case .keyboardShortcut: keyboardStep
+                case .openApplication:  appStep
+                case .shortcutsApp:     shortcutStep
+                case .shellCommand:     shellStep
+                case .mediaControl:     mediaStep
+                case .automation:       EmptyView()
+                }
+            }
+
+            if !isLast {
+                HStack(spacing: 8) {
+                    Text("Delay").frame(width: 50, alignment: .leading).font(.callout)
+                    Slider(value: Binding(
+                        get: { Double(step.delayAfterMs) },
+                        set: { step.delayAfterMs = Int($0) }
+                    ), in: 0...20000, step: 50)
+                    Text(String(format: "%.2f s", Double(step.delayAfterMs) / 1000))
+                        .font(.caption.monospacedDigit())
+                        .frame(width: 54, alignment: .trailing)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+        .onDisappear { recorder.stop() }
+    }
+
+    // MARK: Per-type step editors
+
+    private var keyboardStep: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                recorder.onCapture = { code, label, cmd, shift, opt, ctrl in
+                    step.config.keyCode = code
+                    step.config.keyLabel = label
+                    step.config.keyChar = label.lowercased()
+                    step.config.useCommand = cmd
+                    step.config.useShift = shift
+                    step.config.useOption = opt
+                    step.config.useControl = ctrl
+                }
+                recorder.start()
+            } label: {
+                Text(recorder.isRecording ? "Press any key…" : shortcutDisplay)
+                    .foregroundStyle(recorder.isRecording ? .orange : .primary)
+            }
+            .font(.callout.monospaced())
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            .buttonStyle(.plain)
+
+            HStack(spacing: 12) {
+                Toggle("⌘", isOn: cfgBool(\.useCommand)).toggleStyle(.checkbox)
+                Toggle("⇧", isOn: cfgBool(\.useShift)).toggleStyle(.checkbox)
+                Toggle("⌥", isOn: cfgBool(\.useOption)).toggleStyle(.checkbox)
+                Toggle("⌃", isOn: cfgBool(\.useControl)).toggleStyle(.checkbox)
+            }
+        }
+    }
+
+    private var appStep: some View {
+        HStack {
+            Text(step.config.appPath ?? "No app selected")
+                .font(.caption)
+                .foregroundStyle(step.config.appPath == nil ? .secondary : .primary)
+                .lineLimit(1).truncationMode(.middle)
+            Spacer()
+            Button("Browse…") {
+                let panel = NSOpenPanel()
+                panel.title = "Choose Application"
+                panel.allowedContentTypes = [.application]
+                panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                panel.allowsMultipleSelection = false
+                panel.canChooseDirectories = false
+                if panel.runModal() == .OK, let url = panel.url {
+                    step.config.appPath = url.path
+                }
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var shortcutStep: some View {
+        HStack {
+            Picker("", selection: Binding(
+                get: { step.config.shortcutName ?? "" },
+                set: { step.config.shortcutName = $0 }
+            )) {
+                Text(isLoadingShortcuts ? "Loading…" : "Select Shortcut").tag("")
+                ForEach(shortcutOptions, id: \.self) { name in
+                    Text(name).tag(name)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            Button("Refresh") { onRefreshShortcuts() }
+                .disabled(isLoadingShortcuts)
+        }
+    }
+
+    private var shellStep: some View {
+        TextEditor(text: Binding(
+            get: { step.config.shellCommand ?? "" },
+            set: { step.config.shellCommand = $0 }
+        ))
+        .font(.system(.caption, design: .monospaced))
+        .frame(height: 44)
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
+    }
+
+    private var mediaStep: some View {
+        HStack {
+            Text("Action").frame(width: 60, alignment: .leading).font(.callout)
+            Picker("", selection: Binding(
+                get: { step.config.mediaAction ?? .playPause },
+                set: { step.config.mediaAction = $0 }
+            )) {
+                ForEach(MediaActionType.allCases, id: \.self) { t in
+                    Text(t.rawValue).tag(t)
+                }
+            }
+            .labelsHidden()
+        }
+    }
+
+    // MARK: Helpers
+
+    private var shortcutOptions: [String] {
+        let current = step.config.shortcutName ?? ""
+        if current.isEmpty || shortcutNames.contains(current) { return shortcutNames }
+        return [current] + shortcutNames
+    }
+
+    private var shortcutDisplay: String {
+        var m = ""
+        if step.config.useControl == true { m += "⌃" }
+        if step.config.useOption == true  { m += "⌥" }
+        if step.config.useShift == true   { m += "⇧" }
+        if step.config.useCommand == true { m += "⌘" }
+        let key = step.config.keyLabel ?? step.config.keyChar?.uppercased() ?? ""
+        return key.isEmpty ? "Click to record" : m + key
+    }
+
+    private func cfgBool(_ kp: WritableKeyPath<RadialAction.ActionConfig, Bool?>) -> Binding<Bool> {
+        Binding(
+            get: { step.config[keyPath: kp] ?? false },
+            set: { step.config[keyPath: kp] = $0 }
+        )
     }
 }
 

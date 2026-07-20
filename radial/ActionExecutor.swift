@@ -12,6 +12,32 @@ enum ActionExecutor {
         case .shortcutsApp:    runShortcut(named: mapping.shortcutName)
         case .shellCommand:    runShellCommand(mapping.shellCommand)
         case .mediaControl:    sendMediaKey(mapping.mediaAction)
+        case .automation:      runAutomation(mapping.automationSteps ?? [])
+        }
+    }
+
+    // MARK: - Automation
+
+    /// Maximum allowed delay between steps (matches the editor's slider cap).
+    private static let maxStepDelayMs = 20_000
+
+    /// Run each step in order, sleeping the step's delay before the next one.
+    /// Runs on a detached task so the overlay dismisses immediately; each step
+    /// is dispatched to the main actor to match the single-action call path.
+    private static func runAutomation(_ steps: [AutomationStep]) {
+        // Guard against nested automations to avoid recursion.
+        let steps = steps.filter { $0.actionType != .automation }
+        guard !steps.isEmpty else { return }
+        Task.detached {
+            for (index, step) in steps.enumerated() {
+                let mapping = step.asMapping
+                await MainActor.run { execute(mapping) }
+                guard index < steps.count - 1 else { break }
+                let ms = min(max(step.delayAfterMs, 0), maxStepDelayMs)
+                if ms > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
+                }
+            }
         }
     }
 

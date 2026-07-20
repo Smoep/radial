@@ -288,6 +288,30 @@ struct ContentView: View {
                     ? "⚠ Actions suppressed — menu works but nothing executes"
                     : "Actions execute normally")
         }
+
+        SettingsSection(title: "Backup & Restore") {
+            Text("Save your menu and all settings to a file, then restore them after a reinstall or on another Mac.")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 10) {
+                Button {
+                    ConfigBackup.exportToFile()
+                } label: {
+                    Label("Export…", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+                .controlSize(.large)
+
+                Button {
+                    ConfigBackup.importFromFile()
+                } label: {
+                    Label("Import…", systemImage: "square.and.arrow.down")
+                        .frame(maxWidth: .infinity)
+                }
+                .controlSize(.large)
+            }
+        }
     }
 }
 

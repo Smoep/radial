@@ -618,10 +618,7 @@ final class SessionEngine {
             if self?.flashZoneID == action.id { self?.flashZoneID = nil }
         }
 
-        if !settings.isTestMode {
-            ActionExecutor.execute(action.asMapping)
-        }
-        dismissOverlay()
+        executeAfterOverlayDismiss(action)
     }
 
     /// Returns true if `event` matches the configured keyboard shortcut.
@@ -656,6 +653,16 @@ final class SessionEngine {
         lockedDepth = 0
         fingerRadius = 0
         fingerAngle = 0
+    }
+
+    private func executeAfterOverlayDismiss(_ action: RadialAction) {
+        let mapping = action.asMapping
+        let shouldExecute = !settings.isTestMode
+        dismissOverlay()
+        guard shouldExecute else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            ActionExecutor.execute(mapping)
+        }
     }
 
     private func finalizeRadialSelection() {
@@ -693,9 +700,7 @@ final class SessionEngine {
             if self?.flashZoneID == action.id { self?.flashZoneID = nil }
         }
 
-        if !settings.isTestMode {
-            ActionExecutor.execute(action.asMapping)
-        }
+        executeAfterOverlayDismiss(action)
     }
 
     func clearFinalizedValue() {

@@ -92,6 +92,14 @@ final class AppSettings {
         d.set(mouseReleaseToSelect, forKey: "mouseReleaseToSelect")
     }
 
+    /// Force an immediate, synchronous write of all settings, bypassing the
+    /// debounce timer. Used after a bulk change such as importing a backup.
+    func flush() {
+        saveTimer?.invalidate()
+        saveTimer = nil
+        persistAll()
+    }
+
     // MARK: - Activation
 
     /// Whether the trackpad/mouse trigger is active.

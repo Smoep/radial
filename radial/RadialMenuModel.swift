@@ -13,7 +13,7 @@ struct RadialAction: Codable, Identifiable {
     /// True if this action opens a deeper ring instead of executing.
     var isSubcategory: Bool { children != nil }
 
-    struct ActionConfig: Codable {
+    struct ActionConfig: Codable, Equatable {
         // Keyboard shortcut
         var keyCode: Int?
         var keyChar: String?
@@ -33,23 +33,47 @@ struct RadialAction: Codable, Identifiable {
         var shellCommand: String?
         // Media
         var mediaAction: MediaActionType?
+        // Automation (ordered steps run sequentially with a delay between each)
+        var automationSteps: [AutomationStep]?
     }
 
     /// Convert to ActionMapping for execution.
     var asMapping: ActionMapping {
-        var m = ActionMapping(id: id, actionType: actionType)
-        m.keyCode     = actionConfig.keyCode ?? -1
-        m.keyChar     = actionConfig.keyChar ?? ""
-        m.keyLabel    = actionConfig.keyLabel ?? ""
-        m.useCommand  = actionConfig.useCommand ?? false
-        m.useShift    = actionConfig.useShift ?? false
-        m.useOption   = actionConfig.useOption ?? false
-        m.useControl  = actionConfig.useControl ?? false
-        m.appPath     = actionConfig.appPath ?? ""
-        m.shortcutName = actionConfig.shortcutName ?? ""
-        m.shellCommand = actionConfig.shellCommand ?? ""
-        m.mediaAction = actionConfig.mediaAction ?? .playPause
-        return m
+        ActionMapping(actionID: id, type: actionType, config: actionConfig)
+    }
+}
+
+/// One step in an Automation action: any action type plus the delay (ms) to
+/// wait *after* running it before the next step. The delay is ignored for the
+/// final step.
+struct AutomationStep: Codable, Identifiable, Equatable {
+    var id: String = UUID().uuidString
+    var actionType: ActionType
+    var config: RadialAction.ActionConfig
+    var delayAfterMs: Int = 1000
+
+    /// Flattened form used by the executor.
+    var asMapping: ActionMapping {
+        ActionMapping(actionID: id, type: actionType, config: config)
+    }
+}
+
+extension ActionMapping {
+    /// Build an execution mapping from a stored action type + config.
+    init(actionID: String, type: ActionType, config: RadialAction.ActionConfig) {
+        self.init(id: actionID, actionType: type)
+        keyCode        = config.keyCode ?? -1
+        keyChar        = config.keyChar ?? ""
+        keyLabel       = config.keyLabel ?? ""
+        useCommand     = config.useCommand ?? false
+        useShift       = config.useShift ?? false
+        useOption      = config.useOption ?? false
+        useControl     = config.useControl ?? false
+        appPath        = config.appPath ?? ""
+        shortcutName   = config.shortcutName ?? ""
+        shellCommand   = config.shellCommand ?? ""
+        mediaAction    = config.mediaAction ?? .playPause
+        automationSteps = config.automationSteps
     }
 }
 
@@ -150,28 +174,84 @@ final class RadialMenuStore {
 
     /// Append an action at path (path is the parent: [catIdx] or [catIdx, actIdx, ...]).
     func appendAction(_ action: RadialAction, at parentPath: [Int]) {
-        guard !parentPath.isEmpty, parentPath[0] < categories.count else { return }
-        if parentPath.count == 1 {
-            categories[parentPath[0]].actions.append(action)
-            return
-        }
-        appendActionRecursive(&categories[parentPath[0]].actions, action: action,
-                              path: Array(parentPath.dropFirst()), depth: 0)
+        insertAction(action, at: parentPath, index: nil)
     }
 
-    private func appendActionRecursive(_ actions: inout [RadialAction], action: RadialAction,
-                                        path: [Int], depth: Int) {
+    /// Insert an action at path (path is the parent: [catIdx] or [catIdx, actIdx, ...]).
+    func insertAction(_ action: RadialAction, at parentPath: [Int], index: Int?) {
+        guard !parentPath.isEmpty, parentPath[0] < categories.count else { return }
+        if parentPath.count == 1 {
+            let target = min(max(index ?? categories[parentPath[0]].actions.count, 0), categories[parentPath[0]].actions.count)
+            categories[parentPath[0]].actions.insert(action, at: target)
+            return
+        }
+        insertActionRecursive(&categories[parentPath[0]].actions, action: action,
+                              path: Array(parentPath.dropFirst()), index: index, depth: 0)
+    }
+
+    private func insertActionRecursive(_ actions: inout [RadialAction], action: RadialAction,
+                                       path: [Int], index: Int?, depth: Int) {
         guard path[depth] < actions.count else { return }
         if depth == path.count - 1 {
             if actions[path[depth]].children == nil {
                 actions[path[depth]].children = []
             }
-            actions[path[depth]].children!.append(action)
+            let count = actions[path[depth]].children!.count
+            let target = min(max(index ?? count, 0), count)
+            actions[path[depth]].children!.insert(action, at: target)
             return
         }
         var children = actions[path[depth]].children ?? []
-        appendActionRecursive(&children, action: action, path: path, depth: depth + 1)
+        insertActionRecursive(&children, action: action, path: path, index: index, depth: depth + 1)
         actions[path[depth]].children = children
+    }
+
+    /// Move an action or subcategory to another parent category/subcategory.
+    @discardableResult
+    func moveAction(from sourcePath: [Int], toParentPath destinationParentPath: [Int], insertionIndex: Int? = nil) -> Bool {
+        guard canMoveAction(from: sourcePath, toParentPath: destinationParentPath),
+              let action = actionAt(path: sourcePath) else { return false }
+
+        let sourceParent = Array(sourcePath.dropLast())
+        let sourceIndex = sourcePath[sourcePath.count - 1]
+        let adjustedDestination = adjustedParentPath(destinationParentPath, afterRemoving: sourcePath)
+        let adjustedIndex: Int?
+        if sourceParent == destinationParentPath, let insertionIndex {
+            let target = insertionIndex > sourceIndex ? insertionIndex - 1 : insertionIndex
+            if target == sourceIndex { return false }
+            adjustedIndex = target
+        } else {
+            adjustedIndex = insertionIndex
+        }
+
+        removeAction(at: sourcePath)
+        insertAction(action, at: adjustedDestination, index: adjustedIndex)
+        return true
+    }
+
+    func canMoveAction(from sourcePath: [Int], toParentPath destinationParentPath: [Int]) -> Bool {
+        sourcePath.count >= 2 &&
+        !destinationParentPath.starts(with: sourcePath) &&
+        canAppendAction(to: destinationParentPath) &&
+        actionAt(path: sourcePath) != nil
+    }
+
+    private func canAppendAction(to parentPath: [Int]) -> Bool {
+        guard !parentPath.isEmpty, parentPath[0] < categories.count else { return false }
+        guard parentPath.count > 1 else { return true }
+        return actionAt(path: parentPath)?.isSubcategory == true
+    }
+
+    private func adjustedParentPath(_ parentPath: [Int], afterRemoving sourcePath: [Int]) -> [Int] {
+        let sourceParent = Array(sourcePath.dropLast())
+        let sourceIndex = sourcePath[sourcePath.count - 1]
+        guard parentPath.count > sourceParent.count,
+              Array(parentPath.prefix(sourceParent.count)) == sourceParent,
+              parentPath[sourceParent.count] > sourceIndex else { return parentPath }
+
+        var adjusted = parentPath
+        adjusted[sourceParent.count] -= 1
+        return adjusted
     }
 
     /// Move an action within its sibling list at the given parent path.

@@ -9,6 +9,7 @@ enum ActionType: String, Codable, CaseIterable {
     case shortcutsApp     = "Shortcuts App"
     case shellCommand     = "Shell Command"
     case mediaControl     = "Media Control"
+    case automation       = "Automation"
 }
 
 enum MediaActionType: String, Codable, CaseIterable {
@@ -48,6 +49,9 @@ struct ActionMapping: Codable, Identifiable, Equatable {
     // Media control
     var mediaAction: MediaActionType = .playPause
 
+    // Automation (ordered steps executed with a delay between each)
+    var automationSteps: [AutomationStep]? = nil
+
     var displayDescription: String {
         switch actionType {
         case .keyboardShortcut:
@@ -68,6 +72,9 @@ struct ActionMapping: Codable, Identifiable, Equatable {
             return shellCommand.count > 25 ? "\(preview)…" : String(preview)
         case .mediaControl:
             return mediaAction.rawValue
+        case .automation:
+            let count = automationSteps?.count ?? 0
+            return count == 1 ? "1 step" : "\(count) steps"
         }
     }
 }
