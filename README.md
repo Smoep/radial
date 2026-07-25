@@ -32,8 +32,12 @@ The center of the menu is always a cancel zone. Your finger never leaves the tra
 
 - **Keyboard shortcuts** — any key combo (recorded live from your keyboard)
 - **Launch apps** — open any application instantly
+- **Open a folder** — jump straight to a Finder directory
+- **Open a file** — open any file in its default app
+- **Open a URL** — web links, `mailto:`, or any custom URL scheme
 - **Shell commands** — run arbitrary scripts
 - **Media controls** — play/pause, next/previous track, volume, mute
+- **macOS Shortcuts** — trigger any Shortcuts app workflow
 
 ---
 
@@ -42,9 +46,15 @@ The center of the menu is always a cancel zone. Your finger never leaves the tra
 - Unlimited nesting — categories can contain subcategories at any depth
 - Fully customizable menu via a built-in drag-and-drop editor
 - Two selection modes: **lift-to-select** (fast) or **click-to-confirm** (forgiving)
+- **App-specific menus** — assign a custom radial menu to any running application
+- **Switch between global and app menu** while the overlay is open (configurable key, default Space)
+- Label wrapping — long names split onto two curved arcs automatically, or use ⌥Return to set a manual break
+- Full support for CJK text and emoji in labels (correct spacing and sizing)
+- Export / import your full configuration as a JSON backup
 - Lives in the menu bar — no Dock icon, zero visual clutter
 - Glass-style overlay aesthetic native to macOS 26
 - Per-app awareness — pause tracking when you don't need it
+- Diagnostic logging toggle for troubleshooting (off by default)
 
 ---
 

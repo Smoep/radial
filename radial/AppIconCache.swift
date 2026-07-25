@@ -18,6 +18,19 @@ enum AppIconCache {
         return image
     }
 
+    /// Returns the Finder icon for any existing file or folder.
+    static func icon(forFilePath path: String) -> NSImage? {
+        let key = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+        if let cached = cache[key] { return cached }
+
+        let expanded = (key as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: expanded) else { return nil }
+        let image = NSWorkspace.shared.icon(forFile: expanded)
+        cache[key] = image
+        return image
+    }
+
     private static func resolvedPath(for appPath: String) -> String? {
         if appPath.hasPrefix("/") {
             return FileManager.default.fileExists(atPath: appPath) ? appPath : nil

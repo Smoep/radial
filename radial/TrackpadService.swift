@@ -4,7 +4,12 @@ import CoreGraphics
 import Darwin
 import os
 
-private let tzLog = Logger(subsystem: "com.jos.radial", category: "trackpad")
+private var tzLog: Logger { RadialLog.trackpad }
+
+/// Console trace for the gesture path, silent unless diagnostics are enabled.
+private func tzPrint(_ message: @autoclosure () -> String) {
+    if RadialLog.isEnabled { print("[TrackpadService] \(message())") }
+}
 
 // MARK: - MultitouchSupport private framework bridge
 
@@ -254,6 +259,16 @@ final class TrackpadService {
         let prev = prevFingerCount
         prevFingerCount = fingerCount
 
+        // Activation is strictly a one-finger gesture. Cancel regardless of
+        // the previous count so a candidate started by a click event cannot
+        // survive while a three-finger gesture is already in progress.
+        if fingerCount > 1 {
+            if fingerDown && !isEngaged {
+                cancelCandidate(reason: "multi-finger count \(fingerCount)")
+            }
+            return
+        }
+
         // 0 → 1: single finger just touched.
         if prev == 0 && fingerCount == 1 && !fingerDown {
             peakFingerSize = size
@@ -298,20 +313,20 @@ final class TrackpadService {
             }
             let trigger = settings?.activationTrigger ?? .tapToClick
             if trigger == .tapToClick {
-                print("[TrackpadService] MT: finger down (0→1), starting hold timer")
+                tzPrint("MT: finger down (0→1), starting hold timer")
                 let cursorPt = NSEvent.mouseLocation
                 let holdDur = settings?.activationHoldDuration ?? 0.6
                 let ringDel = settings?.ringDelay ?? 0.25
                 candidateOverlay.show(at: cursorPt, duration: holdDur, delay: ringDel)
                 startHoldTimer()
             } else {
-                print("[TrackpadService] MT: finger down (0→1), waiting for \(trigger.rawValue)")
+                tzPrint("MT: finger down (0→1), waiting for \(trigger.rawValue)")
             }
             tzLog.info("MT down 0→1: trigger=\(trigger.rawValue, privacy: .public)")
         }
         // N → 0: all fingers lifted.
         else if fingerCount == 0 && fingerDown {
-            print("[TrackpadService] MT: all fingers up (\(prev)→0), engaged=\(isEngaged)")
+            tzPrint("MT: all fingers up (\(prev)→0), engaged=\(isEngaged)")
             fingerDown = false
             if isEngaged {
                 let liftMode = settings?.liftToSelect ?? true
@@ -336,11 +351,6 @@ final class TrackpadService {
             } else {
                 cancelCandidate(reason: "finger lifted before engage")
             }
-        }
-        // 1 → 2+: extra fingers during candidate → cancel (multi-finger gesture).
-        else if prev == 1 && fingerCount > 1 && fingerDown && !isEngaged {
-            print("[TrackpadService] MT: multi-finger (\(prev)→\(fingerCount)), cancelling")
-            cancelCandidate(reason: "multi-finger")
         }
     }
 
@@ -376,6 +386,10 @@ final class TrackpadService {
             let trigger = settings?.activationTrigger ?? .tapToClick
             tzLog.info("leftMouseDown recv: trigger=\(trigger.rawValue, privacy: .public) size=\(self.lastFingerSize, privacy: .public)/peak\(self.peakFingerSize, privacy: .public)")
             if trigger == .click {
+                guard prevFingerCount == 1 else {
+                    tzLog.info("leftMouseDown ignored — requires one finger, got \(self.prevFingerCount, privacy: .public)")
+                    return
+                }
                 if lastFingerSize < clickFingerPresenceThreshold {
                     tzLog.info("leftMouseDown ignored — tap, no finger contact (size=\(self.lastFingerSize, privacy: .public))")
                     return
@@ -427,7 +441,10 @@ final class TrackpadService {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + holdDur) { [weak self] in
             guard let self, self.holdTimerID == capturedID else { return }
-            guard self.fingerDown, !self.isEngaged else { return }
+            guard self.fingerDown, self.prevFingerCount == 1, !self.isEngaged else {
+                self.cancelCandidate(reason: "hold threshold without exactly one finger")
+                return
+            }
             // Check if activation should be suppressed (e.g. typing).
             if self.shouldSuppressActivation?() == true {
                 self.cancelCandidate(reason: "typing suppression at hold threshold")
@@ -452,7 +469,7 @@ final class TrackpadService {
     // MARK: - Engagement
 
     private func engage() {
-        print("[TrackpadService] ENGAGED — cursor free, clicks suppressed")
+        tzPrint("ENGAGED — cursor free, clicks suppressed")
         tzLog.info("ENGAGED — overlay opening")
         candidateOverlay.hide()
         isTouching = true
@@ -465,7 +482,7 @@ final class TrackpadService {
     // MARK: - Touch end (called by SessionEngine to dismiss overlay)
 
     func disengage() {
-        print("[TrackpadService] DISENGAGED")
+        tzPrint("DISENGAGED")
         holdTimerID &+= 1
         fingerDown = false
         isTouching = false

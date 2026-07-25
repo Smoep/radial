@@ -9,11 +9,48 @@ enum ActionExecutor {
         switch mapping.actionType {
         case .keyboardShortcut: sendKeyboardShortcut(mapping)
         case .openApplication: openApplication(mapping.appPath)
+        case .openFolder, .openFile: openTarget(path: mapping.targetPath)
+        case .openURL:         openWebURL(mapping.targetURL)
         case .shortcutsApp:    runShortcut(named: mapping.shortcutName)
         case .shellCommand:    runShellCommand(mapping.shellCommand)
         case .mediaControl:    sendMediaKey(mapping.mediaAction)
         case .automation:      runAutomation(mapping.automationSteps ?? [])
         }
+    }
+
+    // MARK: - Open folder / file / URL
+
+    /// Hand a file-system target to Launch Services: folders land in Finder,
+    /// files open in their default app. Deliberately not routed through the
+    /// shell, so quotes or spaces in a path can't be interpreted as syntax.
+    private static func openTarget(path: String) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: expanded) else { return }
+        let url = URL(fileURLWithPath: expanded)
+        DispatchQueue.main.async {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Open a URL with its registered handler. A bare address like
+    /// "example.com" is treated as https so the action still works.
+    private static func openWebURL(_ raw: String) {
+        guard let url = normalizedURL(raw) else { return }
+        DispatchQueue.main.async {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Shared by the executor and the editor's validation hint.
+    static func normalizedURL(_ raw: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let url = URL(string: trimmed), let scheme = url.scheme, !scheme.isEmpty {
+            return url
+        }
+        return URL(string: "https://\(trimmed)")
     }
 
     // MARK: - Automation
@@ -44,15 +81,19 @@ enum ActionExecutor {
     // MARK: - Shortcuts App
 
     private static func runShortcut(named name: String) {
-        guard !name.isEmpty else { return }
-        Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
-            process.arguments = ["run", name]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            try? process.run()
+        guard let url = shortcutURL(named: name) else { return }
+        DispatchQueue.main.async {
+            _ = NSWorkspace.shared.open(url)
         }
+    }
+
+    static func shortcutURL(named name: String) -> URL? {
+        guard !name.isEmpty else { return nil }
+        var components = URLComponents()
+        components.scheme = "shortcuts"
+        components.host = "run-shortcut"
+        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        return components.url
     }
 
     // MARK: - Keyboard Shortcut

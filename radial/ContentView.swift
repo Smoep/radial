@@ -5,6 +5,8 @@ import SwiftUI
 struct ContentView: View {
     private let engine = SessionEngine.shared
     @State private var selectedTab: SettingsTab = .menu
+    /// Mirrors `RadialLog.isEnabled`, which lives outside the observation system.
+    @State private var diagnosticLogging = RadialLog.isEnabled
 
     enum SettingsTab: String, CaseIterable {
         case menu = "Menu", triggers = "Triggers"
@@ -101,12 +103,15 @@ struct ContentView: View {
     // MARK: - Tabs
 
     @ViewBuilder private var menuTab: some View {
-        SettingsSection(title: "Radial Menu") {
+        SettingsSection(title: "Global Menu") {
             HStack {
                 Spacer()
                 Text("Drag to reorder").font(.caption).foregroundStyle(.tertiary)
             }
-            RadialMenuEditor()
+            RadialMenuEditor(store: .shared)
+        }
+        SettingsSection(title: "App Menus") {
+            AppMenusSection()
         }
     }
 
@@ -116,6 +121,7 @@ struct ContentView: View {
         trackpadGroup
         mouseGroup
         keyboardGroup
+        menuSwitchGroup
     }
 
     @ViewBuilder private var trackpadGroup: some View {
@@ -215,8 +221,13 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder private var appearanceTab: some View {
-        SettingsSection(title: "Menu Appearance") {
+    @ViewBuilder private var menuSwitchGroup: some View {
+        SettingsSection(title: "App Menus") {
+            MenuSwitchKeyRow(settings: engine.settings)
+        }
+    }
+
+    @ViewBuilder private var appearanceTab: some View {        SettingsSection(title: "Menu Appearance") {
             SettingsSlider("Ring Height",
                 value: Binding(get: { engine.settings.ringHeight },
                                set: { engine.settings.ringHeight = $0 }),
@@ -287,6 +298,15 @@ struct ContentView: View {
                 caption: engine.settings.isTestMode
                     ? "⚠ Actions suppressed — menu works but nothing executes"
                     : "Actions execute normally")
+
+            Divider().padding(.vertical, 2)
+
+            SettingsToggle("Diagnostic Logging",
+                isOn: Binding(get: { diagnosticLogging },
+                              set: { diagnosticLogging = $0; RadialLog.isEnabled = $0 }),
+                caption: diagnosticLogging
+                    ? "Recording gesture traces — read them with: log show --info --last 10m --predicate 'subsystem == \"com.jos.radial\"'"
+                    : "Off — turn on only to capture a bug, then switch back off")
         }
 
         SettingsSection(title: "Backup & Restore") {
@@ -410,7 +430,7 @@ private struct HotkeyRecorderRow: View {
     }
 
     private var captionText: String {
-        if isRecording { return "Press Esc to cancel  ·  Delete to clear" }
+        if isRecording { return "Press any key · click the recorder again to cancel" }
         if settings.hotkeyKeyCode < 0 { return "Press a key combo, or the same key twice for double-tap" }
         switch settings.hotkeyMode {
         case .combo:     return "Press to open  ·  press again to dismiss"
@@ -432,11 +452,6 @@ private struct HotkeyRecorderRow: View {
                 return event
             }
             let code = Int(event.keyCode)
-            if code == 53 { self.stopRecording(); return nil }
-            if code == 51 || code == 117 {
-                self.settings.hotkeyKeyCode = -1; self.settings.hotkeyModifiers = 0
-                self.settings.hotkeyKeyLabel = ""; self.stopRecording(); return nil
-            }
             if AppSettings.isModifierKeyCode(code) { return nil }
             let mods = Int(event.modifierFlags.intersection([.command, .option, .shift, .control]).rawValue)
             self.handlePress(code: code, label: self.keyLabel(for: event), mods: mods)
@@ -474,15 +489,92 @@ private struct HotkeyRecorderRow: View {
     }
 
     private func keyLabel(for event: NSEvent) -> String {
-        let special: [Int: String] = [
-            36: "↩", 48: "⇥", 49: "Space", 51: "⌫", 53: "Esc",
-            123: "←", 124: "→", 125: "↓", 126: "↑",
-            122: "F1", 120: "F2", 99: "F3", 118: "F4",
-            96: "F5", 97: "F6", 98: "F7", 100: "F8",
-            101: "F9", 109: "F10", 103: "F11", 111: "F12"
-        ]
-        if let name = special[Int(event.keyCode)] { return name }
-        return (event.charactersIgnoringModifiers ?? "").uppercased()
+        radialKeyLabel(for: event)
+    }
+}
+
+/// Human-readable label for a recorded key press.
+private func radialKeyLabel(for event: NSEvent) -> String {
+    let special: [Int: String] = [
+        36: "↩", 48: "⇥", 49: "Space", 51: "⌫", 53: "Esc",
+        117: "⌦",
+        123: "←", 124: "→", 125: "↓", 126: "↑",
+        122: "F1", 120: "F2", 99: "F3", 118: "F4",
+        96: "F5", 97: "F6", 98: "F7", 100: "F8",
+        101: "F9", 109: "F10", 103: "F11", 111: "F12"
+    ]
+    if let name = special[Int(event.keyCode)] { return name }
+    return (event.charactersIgnoringModifiers ?? "").uppercased()
+}
+
+/// Records the single key that toggles between the app menu and Global Menu.
+private struct MenuSwitchKeyRow: View {
+    let settings: AppSettings
+    @State private var isRecording = false
+    @State private var keyMonitor: Any?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: Binding(get: { settings.menuSwitchEnabled },
+                                 set: { settings.menuSwitchEnabled = $0 })) {
+                Text("Switch Menu Key").font(.callout)
+            }
+            .toggleStyle(.switch)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if settings.menuSwitchEnabled {
+                Button { isRecording ? stopRecording() : startRecording() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: isRecording ? "record.circle" : "keyboard")
+                            .foregroundStyle(isRecording ? Color.orange : Color.secondary)
+                        Text(isRecording
+                             ? "Press a key…"
+                             : (settings.menuSwitchKeyCode >= 0 ? settings.menuSwitchKeyLabel : "Click to set"))
+                            .font(.system(.callout, design: .monospaced).weight(.medium))
+                            .foregroundStyle(isRecording ? Color.orange : Color.primary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .frame(minWidth: 44, minHeight: 28)
+                    .background(isRecording
+                                ? Color.orange.opacity(0.10)
+                                : Color.primary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(isRecording ? Color.orange.opacity(0.6) : Color.clear,
+                                      lineWidth: 1.5))
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+
+                Text(caption).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onChange(of: settings.menuSwitchEnabled) { _, enabled in if !enabled { stopRecording() } }
+    }
+
+    private var caption: String {
+        if isRecording { return "Press any key · click the recorder again to cancel" }
+        return "Toggles between an app's menu and the Global Menu while the overlay is open. "
+             + "Radial can't consume the key, so it also reaches the app underneath — pick one that's harmless there."
+    }
+
+    private func startRecording() {
+        isRecording = true
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+            let code = Int(event.keyCode)
+            guard !AppSettings.isModifierKeyCode(code) else { return nil }
+            settings.menuSwitchKeyCode = code
+            settings.menuSwitchKeyLabel = radialKeyLabel(for: event)
+            stopRecording()
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        isRecording = false
+        if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
     }
 }
 

@@ -1,7 +1,7 @@
 import Foundation
 
-/// A single executable action within a radial category.
-/// If `children` is non-empty, acts as a subcategory that opens another ring.
+/// A single item in a radial menu. Items live at every depth, including the
+/// first ring: an item with `children` opens a deeper ring, one without fires.
 struct RadialAction: Codable, Identifiable {
     var id: String           // e.g. "media.playPause"
     var label: String        // e.g. "Play/Pause"
@@ -9,6 +9,8 @@ struct RadialAction: Codable, Identifiable {
     var actionType: ActionType
     var actionConfig: ActionConfig
     var children: [RadialAction]?
+    /// Slice colour. `nil` inherits the nearest ancestor's colour.
+    var colorHex: String?
 
     /// True if this action opens a deeper ring instead of executing.
     var isSubcategory: Bool { children != nil }
@@ -27,6 +29,13 @@ struct RadialAction: Codable, Identifiable {
         /// When true, an Open Application action shows the app's own icon
         /// instead of the chosen SF Symbol.
         var useAppIcon: Bool?
+        // Open folder / file
+        var targetPath: String?
+        /// When true, an Open Folder/File action shows the target's own Finder
+        /// icon instead of the chosen SF Symbol.
+        var useFileIcon: Bool?
+        // Open URL
+        var targetURL: String?
         // macOS Shortcuts app
         var shortcutName: String?
         // Shell command
@@ -40,6 +49,34 @@ struct RadialAction: Codable, Identifiable {
     /// Convert to ActionMapping for execution.
     var asMapping: ActionMapping {
         ActionMapping(actionID: id, type: actionType, config: actionConfig)
+    }
+
+    /// The label as the ring should draw it: one element, or two when the user
+    /// typed a line break.
+    var labelLines: [String] { Self.labelLines(from: label) }
+
+    /// The label flattened onto one line, for list rows and drag previews that
+    /// assume single-line text and would otherwise grow a row taller.
+    var singleLineLabel: String { Self.singleLine(label) }
+
+    /// Splits a label at an explicit line break.
+    ///
+    /// The ring draws exactly two curved arcs, so only the first break creates a
+    /// line; any further ones become spaces rather than silently dropping text.
+    /// A break with nothing on one side collapses back to a single line.
+    static func labelLines(from label: String) -> [String] {
+        let parts = label.split(separator: "\n", omittingEmptySubsequences: false)
+        guard parts.count > 1 else { return [label] }
+        let first = parts[0].trimmingCharacters(in: .whitespaces)
+        let rest = parts[1...].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        if first.isEmpty { return [rest] }
+        if rest.isEmpty { return [first] }
+        return [first, rest]
+    }
+
+    static func singleLine(_ label: String) -> String {
+        label.replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces)
     }
 }
 
@@ -70,6 +107,8 @@ extension ActionMapping {
         useOption      = config.useOption ?? false
         useControl     = config.useControl ?? false
         appPath        = config.appPath ?? ""
+        targetPath     = config.targetPath ?? ""
+        targetURL      = config.targetURL ?? ""
         shortcutName   = config.shortcutName ?? ""
         shellCommand   = config.shellCommand ?? ""
         mediaAction    = config.mediaAction ?? .playPause
@@ -77,133 +116,139 @@ extension ActionMapping {
     }
 }
 
-/// A category shown as a slice in the inner ring.
+/// Legacy first-ring container. Menus used to be `[RadialCategory]`; they are
+/// now a flat `[RadialAction]` tree. Kept so stored data and old backups still
+/// decode, and so the built-in defaults stay readable.
 struct RadialCategory: Codable, Identifiable {
     var id: String           // e.g. "media"
     var label: String        // e.g. "Media"
     var systemImage: String  // SF Symbol
     var colorHex: String     // Hex color for the slice
     var actions: [RadialAction]
+
+    /// A first-ring item holding the category's actions as children.
+    var asAction: RadialAction {
+        RadialAction(id: id, label: label, systemImage: systemImage,
+                     actionType: .keyboardShortcut, actionConfig: .init(),
+                     children: actions, colorHex: colorHex)
+    }
 }
 
-/// Persistent store for the radial menu categories and actions.
+/// Colour used by items that have none and no coloured ancestor.
+let radialDefaultColorHex = "#808080"
+
+/// Persistent store for one radial menu.
+///
+/// A menu is a tree of `RadialAction`s. Items are addressed by an index path:
+/// `[]` is the first ring, `[2]` is the third first-ring item, `[2, 0]` its
+/// first child, and so on.
+///
+/// `shared` holds the Global Menu. App-specific menus get their own instance
+/// (one per bundle identifier) vended by `AppMenuLibrary`.
 @Observable
 final class RadialMenuStore {
 
-    static let shared = RadialMenuStore()
+    /// The Global Menu.
+    static let shared = RadialMenuStore(storageKey: "radialMenuCategories", seedDefaults: true)
 
-    var categories: [RadialCategory] = [] {
+    /// First-ring items.
+    var items: [RadialAction] = [] {
         didSet { save() }
     }
 
-    private let storageKey = "radialMenuCategories"
+    private let storageKey: String
 
-    private init() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
-           let decoded = try? JSONDecoder().decode([RadialCategory].self, from: data) {
-            categories = decoded
-        } else {
-            categories = Self.defaultCategories
+    init(storageKey: String, seedDefaults: Bool) {
+        self.storageKey = storageKey
+        if let data = UserDefaults.standard.data(forKey: storageKey) {
+            items = Self.decodeMenu(from: data) ?? (seedDefaults ? Self.defaultItems : [])
+        } else if seedDefaults {
+            items = Self.defaultItems
         }
     }
 
+    /// Decode a menu, migrating the legacy `[RadialCategory]` shape.
+    /// `RadialAction` is tried first because it cannot decode category JSON
+    /// (`actionType`/`actionConfig` are required), so the two are unambiguous.
+    static func decodeMenu(from data: Data) -> [RadialAction]? {
+        let decoder = JSONDecoder()
+        if let items = try? decoder.decode([RadialAction].self, from: data) { return items }
+        if let legacy = try? decoder.decode([RadialCategory].self, from: data) {
+            return legacy.map { $0.asAction }
+        }
+        return nil
+    }
+
     private func save() {
-        if let data = try? JSONEncoder().encode(categories) {
+        if let data = try? JSONEncoder().encode(items) {
             UserDefaults.standard.set(data, forKey: storageKey)
         }
     }
 
     /// Reset to defaults.
     func resetToDefaults() {
-        categories = Self.defaultCategories
+        items = Self.defaultItems
     }
 
-    /// Access an action by path: [catIdx, actIdx, subIdx, ...].
+    /// Access an item by index path.
     func actionAt(path: [Int]) -> RadialAction? {
-        guard path.count >= 2, path[0] < categories.count else { return nil }
-        var items = categories[path[0]].actions
-        for d in 1..<path.count {
-            guard path[d] < items.count else { return nil }
-            if d == path.count - 1 { return items[path[d]] }
-            items = items[path[d]].children ?? []
-        }
-        return nil
+        guard let idx = path.first, idx < items.count else { return nil }
+        return Self.item(at: Array(path.dropFirst()), in: items[idx])
     }
 
-    /// Set an action at path.
+    private static func item(at path: [Int], in parent: RadialAction) -> RadialAction? {
+        guard let idx = path.first else { return parent }
+        let children = parent.children ?? []
+        guard idx < children.count else { return nil }
+        return item(at: Array(path.dropFirst()), in: children[idx])
+    }
+
+    /// Run `body` on the child list that `parentPath` addresses.
+    @discardableResult
+    private func withChildren<T>(of parentPath: [Int], _ body: (inout [RadialAction]) -> T) -> T? {
+        Self.mutate(&items, path: parentPath, body)
+    }
+
+    private static func mutate<T>(_ list: inout [RadialAction], path: [Int],
+                                  _ body: (inout [RadialAction]) -> T) -> T? {
+        guard let idx = path.first else { return body(&list) }
+        guard idx < list.count else { return nil }
+        var children = list[idx].children ?? []
+        let result = mutate(&children, path: Array(path.dropFirst()), body)
+        if result != nil { list[idx].children = children }
+        return result
+    }
+
+    /// Replace the item at path.
     func setAction(_ action: RadialAction, at path: [Int]) {
-        guard path.count >= 2, path[0] < categories.count else { return }
-        if path.count == 2 {
-            categories[path[0]].actions[path[1]] = action
-            return
+        guard let index = path.last else { return }
+        withChildren(of: Array(path.dropLast())) { siblings in
+            guard index < siblings.count else { return }
+            siblings[index] = action
         }
-        setActionRecursive(&categories[path[0]].actions, action: action, path: Array(path.dropFirst()), depth: 0)
     }
 
-    private func setActionRecursive(_ actions: inout [RadialAction], action: RadialAction, path: [Int], depth: Int) {
-        guard path[depth] < actions.count else { return }
-        if depth == path.count - 1 {
-            actions[path[depth]] = action
-            return
-        }
-        var children = actions[path[depth]].children ?? []
-        setActionRecursive(&children, action: action, path: path, depth: depth + 1)
-        actions[path[depth]].children = children
-    }
-
-    /// Remove an action at path.
+    /// Remove the item at path.
     func removeAction(at path: [Int]) {
-        guard path.count >= 2, path[0] < categories.count else { return }
-        if path.count == 2 {
-            categories[path[0]].actions.remove(at: path[1])
-            return
+        guard let index = path.last else { return }
+        withChildren(of: Array(path.dropLast())) { siblings in
+            guard index < siblings.count else { return }
+            siblings.remove(at: index)
         }
-        removeActionRecursive(&categories[path[0]].actions, path: Array(path.dropFirst()), depth: 0)
     }
 
-    private func removeActionRecursive(_ actions: inout [RadialAction], path: [Int], depth: Int) {
-        guard path[depth] < actions.count else { return }
-        if depth == path.count - 1 {
-            actions.remove(at: path[depth])
-            return
-        }
-        var children = actions[path[depth]].children ?? []
-        removeActionRecursive(&children, path: path, depth: depth + 1)
-        actions[path[depth]].children = children
-    }
-
-    /// Append an action at path (path is the parent: [catIdx] or [catIdx, actIdx, ...]).
+    /// Append an item to the ring addressed by `parentPath` (`[]` = first ring).
     func appendAction(_ action: RadialAction, at parentPath: [Int]) {
         insertAction(action, at: parentPath, index: nil)
     }
 
-    /// Insert an action at path (path is the parent: [catIdx] or [catIdx, actIdx, ...]).
+    /// Insert an item into the ring addressed by `parentPath` (`[]` = first ring).
+    /// A plain action gains an empty child list, becoming a subcategory.
     func insertAction(_ action: RadialAction, at parentPath: [Int], index: Int?) {
-        guard !parentPath.isEmpty, parentPath[0] < categories.count else { return }
-        if parentPath.count == 1 {
-            let target = min(max(index ?? categories[parentPath[0]].actions.count, 0), categories[parentPath[0]].actions.count)
-            categories[parentPath[0]].actions.insert(action, at: target)
-            return
+        withChildren(of: parentPath) { siblings in
+            let target = min(max(index ?? siblings.count, 0), siblings.count)
+            siblings.insert(action, at: target)
         }
-        insertActionRecursive(&categories[parentPath[0]].actions, action: action,
-                              path: Array(parentPath.dropFirst()), index: index, depth: 0)
-    }
-
-    private func insertActionRecursive(_ actions: inout [RadialAction], action: RadialAction,
-                                       path: [Int], index: Int?, depth: Int) {
-        guard path[depth] < actions.count else { return }
-        if depth == path.count - 1 {
-            if actions[path[depth]].children == nil {
-                actions[path[depth]].children = []
-            }
-            let count = actions[path[depth]].children!.count
-            let target = min(max(index ?? count, 0), count)
-            actions[path[depth]].children!.insert(action, at: target)
-            return
-        }
-        var children = actions[path[depth]].children ?? []
-        insertActionRecursive(&children, action: action, path: path, index: index, depth: depth + 1)
-        actions[path[depth]].children = children
     }
 
     /// Move an action or subcategory to another parent category/subcategory.
@@ -230,15 +275,14 @@ final class RadialMenuStore {
     }
 
     func canMoveAction(from sourcePath: [Int], toParentPath destinationParentPath: [Int]) -> Bool {
-        sourcePath.count >= 2 &&
+        !sourcePath.isEmpty &&
         !destinationParentPath.starts(with: sourcePath) &&
         canAppendAction(to: destinationParentPath) &&
         actionAt(path: sourcePath) != nil
     }
 
     private func canAppendAction(to parentPath: [Int]) -> Bool {
-        guard !parentPath.isEmpty, parentPath[0] < categories.count else { return false }
-        guard parentPath.count > 1 else { return true }
+        guard !parentPath.isEmpty else { return true }
         return actionAt(path: parentPath)?.isSubcategory == true
     }
 
@@ -254,40 +298,21 @@ final class RadialMenuStore {
         return adjusted
     }
 
-    /// Move an action within its sibling list at the given parent path.
+    /// Move an item within its sibling list at the given parent path.
     func moveAction(atParentPath parentPath: [Int], from: Int, to: Int) {
-        guard !parentPath.isEmpty, parentPath[0] < categories.count else { return }
-        if parentPath.count == 1 {
-            // Top-level actions in a category.
-            let item = categories[parentPath[0]].actions.remove(at: from)
-            categories[parentPath[0]].actions.insert(item, at: to > from ? to : to)
-            return
+        withChildren(of: parentPath) { siblings in
+            guard from < siblings.count, to <= siblings.count else { return }
+            let item = siblings.remove(at: from)
+            siblings.insert(item, at: min(to, siblings.count))
         }
-        // Deeper: walk to the parent and move within its children.
-        moveActionRecursive(&categories[parentPath[0]].actions,
-                            path: Array(parentPath.dropFirst()), depth: 0,
-                            from: from, to: to)
     }
 
-    private func moveActionRecursive(_ actions: inout [RadialAction],
-                                      path: [Int], depth: Int,
-                                      from: Int, to: Int) {
-        guard path[depth] < actions.count else { return }
-        if depth == path.count - 1 {
-            guard var children = actions[path[depth]].children else { return }
-            let item = children.remove(at: from)
-            children.insert(item, at: to > from ? to : to)
-            actions[path[depth]].children = children
-            return
-        }
-        var children = actions[path[depth]].children ?? []
-        moveActionRecursive(&children, path: path, depth: depth + 1, from: from, to: to)
-        actions[path[depth]].children = children
-    }
+    // MARK: - Default menu
 
-    // MARK: - Default categories
+    /// Built-in Global Menu, authored as categories and flattened into items.
+    static var defaultItems: [RadialAction] { defaultCategories.map { $0.asAction } }
 
-    static let defaultCategories: [RadialCategory] = [
+    private static let defaultCategories: [RadialCategory] = [
         RadialCategory(
             id: "media", label: "Media", systemImage: "play.circle.fill",
             colorHex: "#34C759",

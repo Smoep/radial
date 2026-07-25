@@ -1,6 +1,33 @@
 import Foundation
 import AppKit
 import Observation
+import OSLog
+
+/// Gesture tracing, off by default. When disabled the loggers are backed by
+/// `OSLog.disabled`, so the messages are never formatted at all — the cost is a
+/// single branch per call site rather than string interpolation on every frame.
+enum RadialLog {
+    private static let defaultsKey = "diagnosticLogging"
+
+    static var isEnabled: Bool = UserDefaults.standard.bool(forKey: defaultsKey) {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            UserDefaults.standard.set(isEnabled, forKey: defaultsKey)
+            trackpad = make("trackpad")
+            mouse    = make("mouse")
+            session  = make("session")
+        }
+    }
+
+    private(set) static var trackpad = make("trackpad")
+    private(set) static var mouse    = make("mouse")
+    private(set) static var session  = make("session")
+
+    private static func make(_ category: String) -> Logger {
+        isEnabled ? Logger(subsystem: "com.jos.radial", category: category)
+                  : Logger(OSLog.disabled)
+    }
+}
 
 enum HotkeyMode: String, CaseIterable, Identifiable {
     case combo     = "Combo"
@@ -90,6 +117,9 @@ final class AppSettings {
         d.set(mouseButton.rawValue, forKey: "mouseButton")
         d.set(mouseHoldDuration, forKey: "mouseHoldDuration")
         d.set(mouseReleaseToSelect, forKey: "mouseReleaseToSelect")
+        d.set(menuSwitchEnabled,  forKey: "menuSwitchEnabled")
+        d.set(menuSwitchKeyCode,  forKey: "menuSwitchKeyCode")
+        d.set(menuSwitchKeyLabel, forKey: "menuSwitchKeyLabel")
     }
 
     /// Force an immediate, synchronous write of all settings, bypassing the
@@ -246,9 +276,26 @@ final class AppSettings {
         didSet { scheduleSave() }
     }
 
+    // MARK: - Menu switching (Global ↔ App Menu)
+
+    /// Whether a key toggles between the app menu and the Global Menu while
+    /// the overlay is open.
+    var menuSwitchEnabled: Bool = true {
+        didSet { scheduleSave() }
+    }
+
+    /// Virtual key code of the menu-switch key (-1 = none). Default: Tab.
+    var menuSwitchKeyCode: Int = 48 {
+        didSet { scheduleSave() }
+    }
+
+    /// Human-readable label for the menu-switch key.
+    var menuSwitchKeyLabel: String = "⇥" {
+        didSet { scheduleSave() }
+    }
+
     /// Full display string, e.g. "⌘⇧K" or "⌘ ⌘".
-    var hotkeyDisplayString: String {
-        guard hotkeyKeyCode >= 0, !hotkeyKeyLabel.isEmpty else { return "Not set" }
+    var hotkeyDisplayString: String {        guard hotkeyKeyCode >= 0, !hotkeyKeyLabel.isEmpty else { return "Not set" }
         if hotkeyMode == .doubleTap { return "\(hotkeyKeyLabel) \(hotkeyKeyLabel)" }
         let flags = NSEvent.ModifierFlags(rawValue: UInt(hotkeyModifiers))
         var s = ""
@@ -260,7 +307,6 @@ final class AppSettings {
     }
 
     // MARK: - Modifier key helpers
-
     static let modifierKeyCodes: Set<Int> = [54, 55, 56, 57, 58, 59, 60, 61, 62]
     static func isModifierKeyCode(_ code: Int) -> Bool { modifierKeyCodes.contains(code) }
 
@@ -323,6 +369,9 @@ final class AppSettings {
            let b = MouseButton(rawValue: v)                       { mouseButton     = b }
         if let v = d.object(forKey: "mouseHoldDuration") as? Double { mouseHoldDuration = v }
         if let v = d.object(forKey: "mouseReleaseToSelect") as? Bool { mouseReleaseToSelect = v }
+        if let v = d.object(forKey: "menuSwitchEnabled")  as? Bool   { menuSwitchEnabled  = v }
+        if let v = d.object(forKey: "menuSwitchKeyCode")  as? Int    { menuSwitchKeyCode  = v }
+        if let v = d.object(forKey: "menuSwitchKeyLabel") as? String { menuSwitchKeyLabel = v }
     }
 
     private static func migrateLegacyDefaultsIfNeeded() {

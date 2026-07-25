@@ -2,6 +2,9 @@ import Foundation
 import AppKit
 import Observation
 import CoreGraphics
+import OSLog
+
+private var sessionLog: Logger { RadialLog.session }
 
 /// Central coordinator: receives trackpad events, drives the radial pie menu,
 /// computes the selected category/action, and fires mapped actions on release.
@@ -47,6 +50,53 @@ final class SessionEngine {
     /// Per-depth reveal animation progress.
     private(set) var ringRevealProgress: [Double] = []
 
+    // MARK: - Menu scope (Global vs app-specific)
+
+    /// The app whose menu was resolved when the overlay opened, or nil when the
+    /// frontmost app has no usable app menu.
+    private(set) var appMenuRef: AppMenuRef?
+    /// Items of the resolved app menu (empty when there is none).
+    private(set) var appMenuItems: [RadialAction] = []
+    /// True while the app-specific menu is on screen.
+    private(set) var showingAppMenu: Bool = false
+    /// Items being animated out during a menu switch.
+    private(set) var outgoingItems: [RadialAction] = []
+    /// 0→1 progress of the current menu switch (1 = settled).
+    private(set) var switchProgress: Double = 1
+    /// True once the centre hub has finished its open animation. Stays true
+    /// across menu switches so the hub never re-animates.
+    private(set) var hubVisible: Bool = false
+
+    @ObservationIgnored private var switchStartTime: CFTimeInterval = 0
+    private let switchDuration: CFTimeInterval = 0.2
+
+    /// Whether an app menu exists for the app that was frontmost on open.
+    var canSwitchMenus: Bool { appMenuRef != nil }
+
+    /// The first-ring items currently driving the menu.
+    var activeItems: [RadialAction] {
+        showingAppMenu ? appMenuItems : RadialMenuStore.shared.items
+    }
+
+    /// Colour inherited by the ring at `depth`, i.e. the nearest colour set on
+    /// the selected chain above it.
+    func inheritedColorHex(atDepth depth: Int) -> String {
+        var hex = radialDefaultColorHex
+        var items = activeItems
+        for d in 0..<depth {
+            guard selectionPath.indices.contains(d), selectionPath[d] < items.count else { break }
+            let item = items[selectionPath[d]]
+            if let own = item.colorHex { hex = own }
+            items = item.children ?? []
+        }
+        return hex
+    }
+
+    /// Scale of the centre hub (1 once the open animation has settled).
+    var hubScale: Double { hubVisible ? 1.0 : min(revealProgress * 3, 1.0) }
+    /// Opacity of the hub's glyph/label.
+    var hubAlpha: Double { hubVisible ? 1.0 : min(max((revealProgress - 0.5) * 4, 0), 1) }
+
     // Legacy compatibility
     var selectedCategoryIndex: Int? { selectionPath.indices.contains(0) ? selectionPath[0] : nil }
     var selectedActionIndex: Int? { selectionPath.indices.contains(1) ? selectionPath[1] : nil }
@@ -66,7 +116,9 @@ final class SessionEngine {
 
     private var pollTimer: Timer? = nil
     private var revealStartTime: CFTimeInterval = 0
-    private let revealDuration: CFTimeInterval = 0.35
+    private var revealDuration: CFTimeInterval = 0.35
+    private let openRevealDuration: CFTimeInterval = 0.35
+    private let switchRevealDuration: CFTimeInterval = 0.2
     /// Per-depth reveal start times and tracking.
     private var ringRevealStartTimes: [CFTimeInterval] = []
     private let ringRevealDuration: CFTimeInterval = 0.25
@@ -147,21 +199,10 @@ final class SessionEngine {
         return (outerR + Self.overlayPadding) * 2
     }
 
-    /// Returns items (actions) visible at a given depth for the current selection path.
+    /// Returns the items visible at a given depth for the current selection path.
     func itemsAtDepth(_ depth: Int) -> [RadialAction] {
-        let categories = RadialMenuStore.shared.categories
-        if depth == 0 { return [] }  // depth 0 = categories (handled separately)
-        if depth == 1 {
-            // Actions of the selected category
-            guard selectionPath.indices.contains(0),
-                  selectionPath[0] < categories.count else { return [] }
-            return categories[selectionPath[0]].actions
-        }
-        // Deeper: walk the children
-        guard selectionPath.indices.contains(0),
-              selectionPath[0] < categories.count else { return [] }
-        var items = categories[selectionPath[0]].actions
-        for d in 1..<depth {
+        var items = activeItems
+        for d in 0..<depth {
             guard selectionPath.indices.contains(d),
                   selectionPath[d] < items.count else { return [] }
             items = items[selectionPath[d]].children ?? []
@@ -171,13 +212,7 @@ final class SessionEngine {
 
     /// Walk the menu tree to find maximum depth.
     func maxMenuDepth() -> Int {
-        let categories = RadialMenuStore.shared.categories
-        var maxD = 1  // at least categories + actions
-        for cat in categories {
-            let d = 1 + Self.maxChildDepth(cat.actions)
-            maxD = max(maxD, d)
-        }
-        return maxD
+        max(1, Self.maxChildDepth(activeItems))
     }
 
     private static func maxChildDepth(_ actions: [RadialAction]) -> Int {
@@ -234,6 +269,16 @@ final class SessionEngine {
             guard let self else { return }
             // Skip if this key matches the configured hotkey (handled by hotkeyMonitor).
             if self.isHotkeyEvent(event) { return }
+            // Menu-switch key: only meaningful while the overlay is open and an
+            // app menu exists. Returning early also keeps it from being treated
+            // as a "typing" keystroke that would close the overlay.
+            if self.isMenuSwitchEvent(event) {
+                // Holding the key past the system repeat delay yields a stream of
+                // keyDowns; only the first should flip the menu. Repeats are still
+                // swallowed here so they can't reach the typing suppression below.
+                if !event.isARepeat { self.toggleMenuScope() }
+                return
+            }
             guard self.settings.pauseWhileTyping else { return }
             self.lastKeystrokeTime = CACurrentMediaTime()
             // Kill any in-progress candidate or engagement immediately.
@@ -324,6 +369,9 @@ final class SessionEngine {
                 ringRevealProgress = []
                 ringRevealStartTimes = []
                 lastRevealedAtDepth = []
+                hubVisible = false
+                revealDuration = openRevealDuration
+                resolveMenuScope()
                 revealStartTime = CACurrentMediaTime()
                 selectionOverlay.show(engine: self)
                 overlayCenter = selectionOverlay.center
@@ -344,6 +392,14 @@ final class SessionEngine {
             let eased = 1.0 - pow(1.0 - t, 3.0)
             if abs(eased - revealProgress) > 0.001 {
                 revealProgress = eased
+            }
+            if !hubVisible, revealProgress >= 0.75 { hubVisible = true }
+
+            // Menu switch cross-transition.
+            if switchProgress < 1 {
+                let s = min((now - switchStartTime) / switchDuration, 1.0)
+                switchProgress = s
+                if s >= 1, !outgoingItems.isEmpty { outgoingItems = [] }
             }
 
             updateRadialSelectionFromCursor()
@@ -412,8 +468,8 @@ final class SessionEngine {
         if cwAngle >= 2 * Double.pi { cwAngle -= 2 * Double.pi }
         if abs(cwAngle - fingerAngle) > 0.005 { fingerAngle = cwAngle }
 
-        let categories = RadialMenuStore.shared.categories
-        guard !categories.isEmpty else { return }
+        let rootItems = activeItems
+        guard !rootItems.isEmpty else { return }
 
         // Dead zone: reset everything.
         if pixelDist < Self.deadZoneRadius {
@@ -434,8 +490,8 @@ final class SessionEngine {
             }
         }
 
-        // Depth 0: category selection (full 360°).
-        let catCount = categories.count
+        // Depth 0: first-ring selection (full 360°).
+        let catCount = rootItems.count
         let catAngle = (2 * Double.pi) / Double(catCount)
 
         let firstRingThickness = ringOuterRadius(depth: 0) - ringInnerRadius(depth: 0)
@@ -525,12 +581,12 @@ final class SessionEngine {
 
     /// Mid-angle of the selected item at a given depth (CW from 12 o'clock).
     func midAngleForItem(atDepth depth: Int) -> Double {
-        let categories = RadialMenuStore.shared.categories
         guard selectionPath.indices.contains(depth) else { return 0 }
         let idx = selectionPath[depth]
 
         if depth == 0 {
-            let catAngle = (2 * Double.pi) / Double(categories.count)
+            let count = max(activeItems.count, 1)
+            let catAngle = (2 * Double.pi) / Double(count)
             return catAngle * (Double(idx) + 0.5)
         }
 
@@ -545,25 +601,12 @@ final class SessionEngine {
     }
 
     private func updateLegacyZoneID() {
-        let categories = RadialMenuStore.shared.categories
-        guard selectionPath.indices.contains(0),
-              selectionPath[0] < categories.count else {
-            if liveZoneID != "-" { liveZoneID = "-" }
-            return
-        }
-        let cat = categories[selectionPath[0]]
-        if selectionPath.count == 1 {
-            if liveZoneID != cat.label { liveZoneID = cat.label }
-            return
-        }
-        // Walk the path to find the deepest selected item.
-        var items = cat.actions
-        var label = cat.label
-        for d in 1..<selectionPath.count {
-            guard selectionPath[d] < items.count else { break }
-            let item = items[selectionPath[d]]
-            label = item.label
-            items = item.children ?? []
+        var items = activeItems
+        var label = "-"
+        for idx in selectionPath {
+            guard idx < items.count else { break }
+            label = items[idx].label
+            items = items[idx].children ?? []
         }
         if liveZoneID != label { liveZoneID = label }
     }
@@ -572,34 +615,31 @@ final class SessionEngine {
 
     /// Called when user clicks while overlay is showing.
     private func handleOverlayClick() {
-        // Dead zone → just dismiss.
-        if fingerRadius < Self.deadZoneRadius || selectionPath.isEmpty {
-            dismissOverlay()
-            return
-        }
-
-        // Walk selection path to find the deepest selected action.
-        let categories = RadialMenuStore.shared.categories
-        guard selectionPath[0] < categories.count else { dismissOverlay(); return }
-        let cat = categories[selectionPath[0]]
-
-        if selectionPath.count == 1 {
-            // Only category selected, no action → dismiss.
-            dismissOverlay()
-            return
-        }
-
-        // Walk to the deepest item.
-        var items = cat.actions
-        var selectedAction: RadialAction?
-        var pathLabels = [cat.label]
-        for d in 1..<selectionPath.count {
-            guard selectionPath[d] < items.count else { break }
-            let item = items[selectionPath[d]]
-            pathLabels.append(item.label)
-            if d == selectionPath.count - 1 {
-                selectedAction = item
+        sessionLog.info("overlayClick: radius=\(self.fingerRadius, privacy: .public) path=\(self.selectionPath.map(String.init).joined(separator: ","), privacy: .public) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil", privacy: .public)")
+        // Centre: switches menus when an app menu is available, otherwise closes.
+        if fingerRadius < Self.deadZoneRadius {
+            if canSwitchMenus {
+                toggleMenuScope()
+            } else {
+                dismissOverlay()
             }
+            return
+        }
+        // Clicking anywhere that isn't a slice still closes.
+        if selectionPath.isEmpty {
+            dismissOverlay()
+            return
+        }
+
+        // Walk the selection path to the deepest highlighted item.
+        var items = activeItems
+        var selectedAction: RadialAction?
+        var pathLabels: [String] = []
+        for idx in selectionPath {
+            guard idx < items.count else { break }
+            let item = items[idx]
+            pathLabels.append(item.singleLineLabel)
+            selectedAction = item
             items = item.children ?? []
         }
 
@@ -607,8 +647,10 @@ final class SessionEngine {
 
         // If it's a subcategory, don't execute — user needs to go deeper.
         if action.isSubcategory {
+            sessionLog.info("overlayClick: subcategory '\(action.label, privacy: .public)' — opening deeper ring")
             return
         }
+        sessionLog.info("overlayClick: executing '\(action.label, privacy: .public)' type=\(action.actionType.rawValue, privacy: .public)")
 
         finalizedZoneID = pathLabels.joined(separator: " → ")
         lastFiredActionDescription = action.label
@@ -633,6 +675,17 @@ final class SessionEngine {
         return actual == expected
     }
 
+    /// Returns true if `event` is the configured menu-switch key *and*
+    /// switching is currently possible.
+    private func isMenuSwitchEvent(_ event: NSEvent) -> Bool {
+        guard settings.menuSwitchEnabled,
+              settings.menuSwitchKeyCode >= 0,
+              Int(event.keyCode) == settings.menuSwitchKeyCode,
+              phase == .active,
+              canSwitchMenus else { return false }
+        return true
+    }
+
     /// Double-tap trigger: fire on second press within the configured window.
     private func handleDoubleTap() {
         let now = CACurrentMediaTime()
@@ -645,9 +698,13 @@ final class SessionEngine {
         }
     }
 
-    private func dismissOverlay() {
+    private func dismissOverlay(immediately: Bool = false) {
         trackpad.disengage()
-        selectionOverlay.hide()
+        if immediately {
+            selectionOverlay.hideImmediately()
+        } else {
+            selectionOverlay.hide()
+        }
         phase = .idle
         selectionPath = []
         lockedDepth = 0
@@ -655,10 +712,63 @@ final class SessionEngine {
         fingerAngle = 0
     }
 
+    // MARK: - Menu scope
+
+    /// Pick the menu for the app that is frontmost right now. Called once per
+    /// open so the menu can't change mid-gesture.
+    private func resolveMenuScope() {
+        switchProgress = 1
+        outgoingItems = []
+
+        let library = AppMenuLibrary.shared
+        if let app = NSWorkspace.shared.frontmostApplication,
+           let bundleID = app.bundleIdentifier,
+           bundleID != Bundle.main.bundleIdentifier,
+           let items = library.items(for: bundleID) {
+            var ref = library.ref(for: bundleID)
+            // Keep the stored path fresh so the hub can show the app's icon.
+            if let path = app.bundleURL?.path, ref?.appPath != path { ref?.appPath = path }
+            appMenuRef = ref
+            appMenuItems = items
+            showingAppMenu = true
+        } else {
+            appMenuRef = nil
+            appMenuItems = []
+            showingAppMenu = false
+        }
+    }
+
+    /// Toggle between the app menu and the Global Menu. Temporary — the next
+    /// open resolves automatically again.
+    func toggleMenuScope() {
+        guard phase == .active, canSwitchMenus else { return }
+
+        outgoingItems = activeItems
+        showingAppMenu.toggle()
+
+        // Collapse back to the first ring.
+        selectionPath = []
+        lockedDepth = 0
+        ringRevealProgress = []
+        ringRevealStartTimes = []
+        lastRevealedAtDepth = []
+
+        let now = CACurrentMediaTime()
+        revealDuration = switchRevealDuration
+        revealProgress = 0
+        revealStartTime = now
+        switchStartTime = now
+        switchProgress = 0
+
+        // The two menus can have different depths, so the window may need to grow.
+        selectionOverlay.resize(engine: self)
+        overlayCenter = selectionOverlay.center
+    }
+
     private func executeAfterOverlayDismiss(_ action: RadialAction) {
         let mapping = action.asMapping
         let shouldExecute = !settings.isTestMode
-        dismissOverlay()
+        dismissOverlay(immediately: true)
         guard shouldExecute else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             ActionExecutor.execute(mapping)
@@ -666,23 +776,14 @@ final class SessionEngine {
     }
 
     private func finalizeRadialSelection() {
-        let categories = RadialMenuStore.shared.categories
-        guard selectionPath.count >= 2,
-              selectionPath[0] < categories.count else {
-            finalizedZoneID = nil
-            lastFiredActionDescription = nil
-            return
-        }
-
-        let cat = categories[selectionPath[0]]
-        var items = cat.actions
+        var items = activeItems
         var selectedAction: RadialAction?
-        var pathLabels = [cat.label]
-        for d in 1..<selectionPath.count {
-            guard selectionPath[d] < items.count else { break }
-            let item = items[selectionPath[d]]
-            pathLabels.append(item.label)
-            if d == selectionPath.count - 1 { selectedAction = item }
+        var pathLabels: [String] = []
+        for idx in selectionPath {
+            guard idx < items.count else { break }
+            let item = items[idx]
+            pathLabels.append(item.singleLineLabel)
+            selectedAction = item
             items = item.children ?? []
         }
 

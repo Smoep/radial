@@ -62,28 +62,52 @@ Breaks previously granted accessibility permissions. Treat `com.jos.radial` as s
 **`NSEvent.touches` for global trackpad capture**
 Doesn't work globally. Must use `MultitouchSupport.framework` via dlopen.
 
+**`NSEvent` global monitor — not filtering key-repeat**
+A `.keyDown` handler without `guard !event.isARepeat` fires once per OS repeat
+tick while the key is held. For toggle-style actions (menu switch) this appears
+as a single press registering multiple times. Always mirror the `hotkeyMonitor`
+pattern: `case .keyDown where !event.isARepeat`, or check `!event.isARepeat`
+before the action, keeping the early `return` for repeats too (so they don't
+fall through to other handlers like pause-while-typing).
+
+**CJK emoji glyph widths — approximate table is badly wrong for emoji**
+Emoji draw ~1.25 em of ink at 11pt but were allocated 0.55 em (Latin fallthrough).
+The overlap is immediate and visible. Detecting emoji via `Character.isEmoji` also
+captures plain digits and `#`. Use `scalar.properties.isEmojiPresentation` or
+a `0xFE0F` variation selector check instead.
+
+**Piping `xcodebuild` directly to `grep` returns empty in the VS Code agent terminal**
+Always redirect to a file first (`> /tmp/build.log 2>&1`), then grep the file.
+
 ---
 
 ## Build / Run Steps That Work
 
-**Build Release:**
+**Build Release (redirect to file — piping straight to grep returns empty in some shells):**
 ```bash
 cd /Users/jos/projects/mac/radial
-
-xcodebuild -project radial.xcodeproj \
-           -scheme radial \
-           -configuration Release \
-           -derivedDataPath build-release \
-           build 2>&1 | grep -E "error:|BUILD" | head -20
+xcodebuild -project radial.xcodeproj -scheme radial -configuration Release \
+  -derivedDataPath build-release build > /tmp/radial_build.log 2>&1
+echo "exit=$?"
+grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" /tmp/radial_build.log | tail
 ```
 
-**Deploy:**
+**Deploy + verify (both hashes must match, PID confirms new process):**
 ```bash
-pkill -9 "Radial" 2>/dev/null
-sleep 0.5
-rm -rf "/Applications/Radial.app"
-cp -R "build-release/Build/Products/Release/Radial.app" "/Applications/Radial.app"
-open -a "/Applications/Radial.app"
+pkill -9 Radial 2>/dev/null
+rm -rf /Applications/Radial.app
+cp -R build-release/Build/Products/Release/Radial.app /Applications/Radial.app
+open -a /Applications/Radial.app
+shasum -a 256 build-release/Build/Products/Release/Radial.app/Contents/MacOS/Radial \
+               /Applications/Radial.app/Contents/MacOS/Radial
+pgrep -fl Radial
+```
+
+**Run the test suite:**
+```bash
+xcodebuild test -project radial.xcodeproj -scheme radial \
+  -destination 'platform=macOS' > /tmp/radial_test.log 2>&1
+grep -E "error:|passed on|failed|BUILD" /tmp/radial_test.log | tail -20
 ```
 
 **Check CPU usage (5-second sample):**

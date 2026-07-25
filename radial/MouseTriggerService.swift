@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 import os
 
-private let mouseLog = Logger(subsystem: "com.jos.radial", category: "mouse")
+private var mouseLog: Logger { RadialLog.mouse }
 private let mouseCandidateMoveCancelThreshold: CGFloat = 80
 
 /// Standalone mouse-button trigger for the radial overlay.

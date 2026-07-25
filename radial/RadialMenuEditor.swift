@@ -184,10 +184,6 @@ final class KeyRecorder {
         isRecording = true
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            if event.keyCode == 53 { // Escape cancels recording
-                self.stop()
-                return nil
-            }
             let code = Int(event.keyCode)
             let chars = event.charactersIgnoringModifiers ?? ""
             let label = Self.labelForKey(code, chars: chars)
@@ -216,6 +212,8 @@ final class KeyRecorder {
         case 36: return "Return"
         case 48: return "Tab"
         case 51: return "Delete"
+        case 53: return "Esc"
+        case 117: return "Forward Delete"
         case 126: return "↑"
         case 125: return "↓"
         case 123: return "←"
@@ -239,16 +237,10 @@ final class KeyRecorder {
 
 // MARK: - Edit Target
 
-private enum EditTarget: Identifiable {
-    case category(Int)
-    case action(path: [Int])  // [catIdx] or [catIdx, actIdx] or [catIdx, actIdx, subIdx, ...]
-
-    var id: String {
-        switch self {
-        case .category(let i):      return "cat-\(i)"
-        case .action(let path):     return "act-\(path.map(String.init).joined(separator: "-"))"
-        }
-    }
+/// The item being edited, addressed by index path ([] is never used).
+private struct EditTarget: Identifiable {
+    let path: [Int]
+    var id: String { path.map(String.init).joined(separator: "-") }
 }
 
 // MARK: - Action Drag & Drop Model
@@ -296,6 +288,7 @@ private final class ActionDragController {
     @ObservationIgnored var containerRegions: [ContainerRegion] = []
     @ObservationIgnored var sourceAction: RadialAction?
     @ObservationIgnored var expand: (String) -> Void = { _ in }
+    @ObservationIgnored var store: RadialMenuStore = .shared
 
     var sourcePath: [Int]?
     var pointer: CGPoint = .zero
@@ -325,7 +318,7 @@ private final class ActionDragController {
 
     private func computeTarget() -> DropTarget? {
         guard let source = sourcePath else { return nil }
-        let store = RadialMenuStore.shared
+        let store = self.store
         let p = pointer
 
         // A) Drop *into* a subcategory when hovering the middle band of its row.
@@ -359,7 +352,7 @@ private final class ActionDragController {
 
     func commit() {
         guard let source = sourcePath, let t = target else { reset(); return }
-        let store = RadialMenuStore.shared
+        let store = self.store
         let intoId: String? = t.intoSubcategory ? store.actionAt(path: t.parentPath)?.id : nil
         // Clear the visual drag state FIRST so the insertion line / preview
         // disappear instantly, then perform the (unanimated) move. Resetting
@@ -376,218 +369,213 @@ private final class ActionDragController {
     }
 }
 
-// MARK: - Radial Menu Editor
+// MARK: - App Menus
 
-struct RadialMenuEditor: View {
-    @State private var editTarget: EditTarget?
-    @State private var expanded: Set<String> = []
-    @State private var catDragId: String?
-    @State private var catDragOffset: CGFloat = 0
-    @State private var drag = ActionDragController()
+/// Lists the configured app menus, lets the user add or remove one, and edits
+/// the selected app's menu. Sits below the Global Menu editor.
+struct AppMenusSection: View {
+    @State private var selected: String?
+    @State private var confirmRemove = false
+
+    private var library: AppMenuLibrary { AppMenuLibrary.shared }
+
+    private var selectedRef: AppMenuRef? {
+        guard let selected else { return nil }
+        return library.ref(for: selected)
+    }
 
     var body: some View {
-        let store = RadialMenuStore.shared
-
-        VStack(alignment: .leading, spacing: 8) {
-            // ── Category list ──
-            ForEach(Array(store.categories.enumerated()), id: \.element.id) { ci, cat in
-                VStack(alignment: .leading, spacing: 4) {
-                    // ── Category header ──
-                    HStack(spacing: 8) {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.callout).foregroundStyle(.tertiary)
-                            .frame(width: 20)
-                            .contentShape(Rectangle())
-                            .gesture(
-                                DragGesture(minimumDistance: 8)
-                                    .onChanged { value in
-                                        catDragId = cat.id
-                                        catDragOffset = value.translation.height
-                                    }
-                                    .onEnded { value in
-                                        defer {
-                                            withAnimation(.easeOut(duration: 0.2)) {
-                                                catDragId = nil; catDragOffset = 0
-                                            }
-                                        }
-                                        guard let fromIdx = store.categories.firstIndex(where: { $0.id == cat.id }) else { return }
-                                        let steps = Int(round(value.translation.height / 58))
-                                        let targetIdx = max(0, min(store.categories.count - 1, fromIdx + steps))
-                                        if targetIdx != fromIdx {
-                                            withAnimation(.easeInOut(duration: 0.25)) {
-                                                store.categories.move(
-                                                    fromOffsets: IndexSet(integer: fromIdx),
-                                                    toOffset: targetIdx > fromIdx ? targetIdx + 1 : targetIdx)
-                                            }
-                                        }
-                                    }
-                            )
-
-                        Button { toggle(cat.id) } label: {
-                            Image(systemName: expanded.contains(cat.id) ? "chevron.down" : "chevron.right")
-                                .font(.callout.weight(.medium))
-                                .frame(width: 28, height: 28)
-                                .contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                if library.apps.isEmpty {
+                    Text("No app menus yet.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker("", selection: $selected) {
+                        Text("Choose an app…").tag(String?.none)
+                        ForEach(library.apps) { ref in
+                            Text(ref.name).tag(String?.some(ref.bundleID))
                         }
-                        .buttonStyle(.plain)
-
-                        Image(systemName: cat.systemImage)
-                            .font(.title3)
-                            .foregroundStyle(colorFromHex(cat.colorHex))
-                            .frame(width: 24)
-                        Text(cat.label)
-                            .font(.body.weight(.semibold))
-                        Spacer()
-                        Text("\(cat.actions.count) actions")
-                            .font(.caption).foregroundStyle(.secondary)
-
-                        Button { store.categories.remove(at: ci) } label: {
-                            Image(systemName: "trash")
-                                .font(.callout)
-                                .foregroundStyle(.red.opacity(0.6))
-                                .frame(width: 28, height: 28)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Delete category")
                     }
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        editTarget = .category(ci)
-                    }
-
-                    // ── Actions (when expanded) ──
-                    if expanded.contains(cat.id) {
-                        ActionListView(
-                            actions: cat.actions,
-                            path: [ci],
-                            editTarget: $editTarget,
-                            expanded: $expanded,
-                            drag: drag,
-                            indent: 26
-                        )
-
-                        HStack(spacing: 16) {
-                            Button {
-                                let a = RadialAction(
-                                    id: UUID().uuidString,
-                                    label: "New Action",
-                                    systemImage: "bolt.fill",
-                                    actionType: .keyboardShortcut,
-                                    actionConfig: .init()
-                                )
-                                store.categories[ci].actions.append(a)
-                                editTarget = .action(path: [ci, store.categories[ci].actions.count - 1])
-                            } label: {
-                                Label("Add Action", systemImage: "plus")
-                                    .font(.callout)
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.blue)
-
-                            Button {
-                                let sub = RadialAction(
-                                    id: UUID().uuidString,
-                                    label: "New Subcategory",
-                                    systemImage: "folder.fill",
-                                    actionType: .keyboardShortcut,
-                                    actionConfig: .init(),
-                                    children: []
-                                )
-                                store.categories[ci].actions.append(sub)
-                                let newIdx = store.categories[ci].actions.count - 1
-                                expanded.insert(sub.id)
-                                editTarget = .action(path: [ci, newIdx])
-                            } label: {
-                                Label("Add Subcategory", systemImage: "folder.badge.plus")
-                                    .font(.callout)
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.orange)
-                        }
-                        .padding(.leading, 30)
-                        .padding(.top, 2)
-                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 240)
                 }
-                .padding(8)
-                .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(key: ContainerRegionKey.self, value: [ContainerRegion(
-                            parentPath: [ci],
-                            appendIndex: cat.actions.count,
-                            expandId: cat.id,
-                            frame: geo.frame(in: .named(radialEditorSpace))
-                        )])
+
+                Menu {
+                    let candidates = library.selectableRunningApps()
+                    if candidates.isEmpty {
+                        Text("No other apps running")
+                    } else {
+                        ForEach(candidates) { app in
+                            Button(app.name) {
+                                library.addMenu(bundleID: app.bundleID,
+                                                name: app.name,
+                                                appPath: app.appPath)
+                                selected = app.bundleID
+                            }
+                        }
                     }
-                )
-                .overlay {
-                    if drag.isDragging, drag.target?.parentPath == [ci] {
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.accentColor.opacity(0.7), lineWidth: 1.5)
-                    }
+                } label: {
+                    Label("Add App…", systemImage: "plus")
+                        .font(.callout)
                 }
-                .offset(y: catDragId == cat.id ? catDragOffset : 0)
-                .zIndex(catDragId == cat.id ? 10 : 0)
-                .opacity(catDragId == cat.id ? 0.85 : 1)
-                .scaleEffect(catDragId == cat.id ? 1.02 : 1)
-                .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.7), value: catDragOffset)
-                .animation(.easeInOut(duration: 0.15), value: catDragId)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Create a menu for a currently running app")
+
+                Spacer()
+
+                if let ref = selectedRef {
+                    Button {
+                        confirmRemove = true
+                    } label: {
+                        Label("Remove", systemImage: "trash")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.red.opacity(0.7))
+                    .help("Delete the menu for \(ref.name)")
+                }
             }
 
-            // ── Add Category ──
-            Button {
-                let c = RadialCategory(
-                    id: UUID().uuidString,
-                    label: "New",
-                    systemImage: "star.fill",
-                    colorHex: "#808080",
-                    actions: []
-                )
-                store.categories.append(c)
-                expanded.insert(c.id)
-                editTarget = .category(store.categories.count - 1)
-            } label: {
-                Label("Add Category", systemImage: "plus.circle.fill")
-                    .font(.callout)
+            Text(caption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let ref = selectedRef, let store = library.store(for: ref.bundleID) {
+                Divider()
+                RadialMenuEditor(store: store).id(ref.bundleID)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.blue)
-            .padding(.top, 4)
         }
+        .alert("Delete this app menu?", isPresented: $confirmRemove) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                if let selected { library.removeMenu(bundleID: selected) }
+                selected = nil
+            }
+        } message: {
+            Text("\(selectedRef?.name ?? "This app") will use the Global Menu again. This can't be undone.")
+        }
+    }
+
+    private var caption: String {
+        guard let ref = selectedRef else {
+            return "An app menu replaces the Global Menu whenever that app is frontmost."
+        }
+        if library.store(for: ref.bundleID)?.items.isEmpty ?? true {
+            return "This menu is empty, so \(ref.name) still shows the Global Menu. Add an item to activate it."
+        }
+        let switchKey = AppSettings.shared.menuSwitchEnabled
+            ? " Press \(AppSettings.shared.menuSwitchKeyLabel) or click the centre to switch to the Global Menu."
+            : " Click the centre to switch to the Global Menu."
+        return "Shown automatically when \(ref.name) is frontmost." + switchKey
+    }
+}
+
+// MARK: - Radial Menu Editor
+
+/// Colours handed out to new first-ring items so they start visually distinct.
+private let radialNewItemPalette = [
+    "#34C759", "#007AFF", "#FF9500", "#AF52DE", "#FF3B30", "#00A6A6",
+]
+
+struct RadialMenuEditor: View {
+    let store: RadialMenuStore
+    @State private var editTarget: EditTarget?
+    @State private var expanded: Set<String> = []
+    @State private var drag = ActionDragController()
+
+    init(store: RadialMenuStore = .shared) {
+        self.store = store
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if store.items.isEmpty {
+                Text("This menu is empty. Add an action to get started.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            }
+
+            ActionListView(
+                actions: store.items,
+                path: [],
+                editTarget: $editTarget,
+                expanded: $expanded,
+                drag: drag,
+                indent: 0,
+                store: store
+            )
+
+            HStack(spacing: 16) {
+                Button { addRootItem(children: nil) } label: {
+                    Label("Add Action", systemImage: "plus.circle.fill")
+                        .font(.callout)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+
+                Button { addRootItem(children: []) } label: {
+                    Label("Add Category", systemImage: "folder.badge.plus")
+                        .font(.callout)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.orange)
+            }
+            .padding(.top, 6)
+        }
+        .padding(8)
+        .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 10))
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: ContainerRegionKey.self, value: [ContainerRegion(
+                    parentPath: [],
+                    appendIndex: store.items.count,
+                    expandId: "root",
+                    frame: geo.frame(in: .named(radialEditorSpace))
+                )])
+            }
+        )
         .coordinateSpace(.named(radialEditorSpace))
         .onPreferenceChange(RowRegionKey.self) { drag.rowRegions = $0 }
         .onPreferenceChange(ContainerRegionKey.self) { drag.containerRegions = $0 }
         .overlay(alignment: .topLeading) {
             FloatingDragPreview(drag: drag)
         }
-        .onAppear { drag.expand = { id in expanded.insert(id) } }
+        .onAppear {
+            drag.expand = { id in expanded.insert(id) }
+            drag.store = store
+        }
         .sheet(item: $editTarget) { target in
-            switch target {
-            case .category(let idx):
-                if idx < store.categories.count {
-                    CategoryEditorSheet(catIdx: idx)
+            if let action = store.actionAt(path: target.path) {
+                if action.isSubcategory {
+                    SubcategoryEditorSheet(path: target.path, store: store)
                 } else {
-                    EmptyView()
+                    ActionEditorSheet(path: target.path, store: store)
                 }
-            case .action(let path):
-                if let action = RadialMenuStore.shared.actionAt(path: path) {
-                    if action.isSubcategory {
-                        SubcategoryEditorSheet(path: path)
-                    } else {
-                        ActionEditorSheet(path: path)
-                    }
-                } else {
-                    EmptyView()
-                }
+            } else {
+                EmptyView()
             }
         }
     }
 
-    private func toggle(_ id: String) {
-        if expanded.contains(id) { expanded.remove(id) }
-        else { expanded.insert(id) }
+    private func addRootItem(children: [RadialAction]?) {
+        let isCategory = children != nil
+        let item = RadialAction(
+            id: UUID().uuidString,
+            label: isCategory ? "New Category" : "New Action",
+            systemImage: isCategory ? "folder.fill" : "bolt.fill",
+            actionType: .keyboardShortcut,
+            actionConfig: .init(),
+            children: children,
+            colorHex: radialNewItemPalette[store.items.count % radialNewItemPalette.count]
+        )
+        store.items.append(item)
+        if isCategory { expanded.insert(item.id) }
+        editTarget = EditTarget(path: [store.items.count - 1])
     }
 }
 
@@ -603,7 +591,7 @@ private struct FloatingDragPreview: View {
             HStack(spacing: 8) {
                 Image(systemName: action.isSubcategory ? "folder.fill" : action.systemImage)
                     .foregroundStyle(action.isSubcategory ? .orange : .secondary)
-                Text(action.label).font(.callout)
+                Text(action.singleLineLabel).font(.callout)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -620,16 +608,20 @@ private struct FloatingDragPreview: View {
 
 private struct ActionListView: View {
     let actions: [RadialAction]
-    let path: [Int]  // parent path (e.g. [catIdx] or [catIdx, actIdx])
+    let path: [Int]  // parent path ([] = first ring)
     @Binding var editTarget: EditTarget?
     @Binding var expanded: Set<String>
     let drag: ActionDragController
     let indent: CGFloat
+    let store: RadialMenuStore
+    var inheritedColor: Color = colorFromHex(radialDefaultColorHex)
+
+    private var isRoot: Bool { path.isEmpty }
 
     var body: some View {
-        let store = RadialMenuStore.shared
         ForEach(Array(actions.enumerated()), id: \.element.id) { ai, action in
             let actionPath = path + [ai]
+            let itemColor = action.colorHex.map(colorFromHex) ?? inheritedColor
             let isLast = ai == actions.count - 1
             let intoHighlight = drag.target?.intoSubcategory == true && drag.target?.parentPath == actionPath
             VStack(alignment: .leading, spacing: 2) {
@@ -650,9 +642,9 @@ private struct ActionListView: View {
                         .buttonStyle(.plain)
                     }
 
-                    rowIcon(action)
-                    Text(action.label)
-                        .font(.callout)
+                    rowIcon(action, color: itemColor)
+                    Text(action.singleLineLabel)
+                        .font(isRoot ? .body : .callout)
                         .fontWeight(action.isSubcategory ? .medium : .regular)
                     if action.isSubcategory {
                         Text("\(action.children?.count ?? 0) items")
@@ -705,7 +697,7 @@ private struct ActionListView: View {
                 .contentShape(Rectangle())
                 .opacity(drag.sourcePath == actionPath ? 0.4 : 1)
                 .onTapGesture {
-                    editTarget = .action(path: actionPath)
+                    editTarget = EditTarget(path: actionPath)
                 }
                 .gesture(
                     DragGesture(minimumDistance: 6, coordinateSpace: .named(radialEditorSpace))
@@ -723,59 +715,63 @@ private struct ActionListView: View {
 
                 // Recursive children
                 if action.isSubcategory && expanded.contains(action.id) {
-                    ActionListView(
-                        actions: action.children ?? [],
-                        path: actionPath,
-                        editTarget: $editTarget,
-                        expanded: $expanded,
-                        drag: drag,
-                        indent: indent + 20
-                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        ActionListView(
+                            actions: action.children ?? [],
+                            path: actionPath,
+                            editTarget: $editTarget,
+                            expanded: $expanded,
+                            drag: drag,
+                            indent: indent + 20,
+                            store: store,
+                            inheritedColor: itemColor
+                        )
 
-                    HStack(spacing: 16) {
-                        Button {
-                            let a = RadialAction(
-                                id: UUID().uuidString,
-                                label: "New Action",
-                                systemImage: "bolt.fill",
-                                actionType: .keyboardShortcut,
-                                actionConfig: .init()
-                            )
-                            store.appendAction(a, at: actionPath)
-                            if let children = store.actionAt(path: actionPath)?.children {
-                                editTarget = .action(path: actionPath + [children.count - 1])
+                        HStack(spacing: 16) {
+                            Button {
+                                let a = RadialAction(
+                                    id: UUID().uuidString,
+                                    label: "New Action",
+                                    systemImage: "bolt.fill",
+                                    actionType: .keyboardShortcut,
+                                    actionConfig: .init()
+                                )
+                                store.appendAction(a, at: actionPath)
+                                if let children = store.actionAt(path: actionPath)?.children {
+                                    editTarget = EditTarget(path: actionPath + [children.count - 1])
+                                }
+                            } label: {
+                                Label("Add Action", systemImage: "plus")
+                                    .font(.caption)
                             }
-                        } label: {
-                            Label("Add Action", systemImage: "plus")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.blue)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.blue)
 
-                        Button {
-                            let sub = RadialAction(
-                                id: UUID().uuidString,
-                                label: "New Subcategory",
-                                systemImage: "folder.fill",
-                                actionType: .keyboardShortcut,
-                                actionConfig: .init(),
-                                children: []
-                            )
-                            store.appendAction(sub, at: actionPath)
-                            if let children = store.actionAt(path: actionPath)?.children {
-                                expanded.insert(sub.id)
-                                editTarget = .action(path: actionPath + [children.count - 1])
+                            Button {
+                                let sub = RadialAction(
+                                    id: UUID().uuidString,
+                                    label: "New Subcategory",
+                                    systemImage: "folder.fill",
+                                    actionType: .keyboardShortcut,
+                                    actionConfig: .init(),
+                                    children: []
+                                )
+                                store.appendAction(sub, at: actionPath)
+                                if let children = store.actionAt(path: actionPath)?.children {
+                                    expanded.insert(sub.id)
+                                    editTarget = EditTarget(path: actionPath + [children.count - 1])
+                                }
+                            } label: {
+                                Label("Add Subcategory", systemImage: "folder.badge.plus")
+                                    .font(.caption)
                             }
-                        } label: {
-                            Label("Add Subcategory", systemImage: "folder.badge.plus")
-                                .font(.caption)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.orange)
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.orange)
+                        .padding(.leading, indent + 24)
+                        .padding(.top, 2)
+                        .padding(.vertical, 4)
                     }
-                    .padding(.leading, indent + 24)
-                    .padding(.top, 2)
-                    .padding(.vertical, 4)
                     .background(
                         GeometryReader { geo in
                             Color.clear.preference(key: ContainerRegionKey.self, value: [ContainerRegion(
@@ -804,7 +800,7 @@ private struct ActionListView: View {
     }
 
     @ViewBuilder
-    private func rowIcon(_ action: RadialAction) -> some View {
+    private func rowIcon(_ action: RadialAction, color: Color) -> some View {
         if !action.isSubcategory,
            action.actionType == .openApplication,
               action.actionConfig.useAppIcon ?? true,
@@ -816,8 +812,9 @@ private struct ActionListView: View {
                 .frame(width: 28)
         } else {
             Image(systemName: action.isSubcategory ? "folder.fill" : action.systemImage)
-                .font(.body).foregroundStyle(action.isSubcategory ? .orange : .secondary)
-                .frame(width: 20)
+                .font(isRoot ? .title3 : .body)
+                .foregroundStyle(color)
+                .frame(width: isRoot ? 24 : 20)
         }
     }
 
@@ -825,6 +822,10 @@ private struct ActionListView: View {
         switch action.actionType {
         case .keyboardShortcut: return action.asMapping.displayDescription
         case .openApplication: return action.actionConfig.appPath ?? ""
+        case .openFolder, .openFile:
+            guard let path = action.actionConfig.targetPath else { return "" }
+            return URL(fileURLWithPath: path).lastPathComponent
+        case .openURL:         return action.actionConfig.targetURL ?? ""
         case .shortcutsApp:    return action.actionConfig.shortcutName ?? "Shortcut"
         case .shellCommand:    return "Shell"
         case .mediaControl:    return action.actionConfig.mediaAction?.rawValue ?? ""
@@ -835,72 +836,39 @@ private struct ActionListView: View {
     }
 }
 
-// MARK: - Category Editor Sheet
+// MARK: - Colour row
 
-private struct CategoryEditorSheet: View {
-    let catIdx: Int
-    @State private var name: String
-    @State private var icon: String
+/// Slice colour with an "inherit from parent" escape hatch. First-ring items
+/// inherit the neutral default instead.
+private struct ItemColorRow: View {
+    @Binding var colorHex: String?
+    let isRoot: Bool
+
     @State private var color: Color
-    @State private var showIconPicker = false
-    @Environment(\.dismiss) var dismiss
 
-    init(catIdx: Int) {
-        self.catIdx = catIdx
-        let cat = RadialMenuStore.shared.categories[catIdx]
-        _name  = State(initialValue: cat.label)
-        _icon  = State(initialValue: cat.systemImage)
-        _color = State(initialValue: colorFromHex(cat.colorHex))
+    init(colorHex: Binding<String?>, isRoot: Bool) {
+        _colorHex = colorHex
+        self.isRoot = isRoot
+        _color = State(initialValue: colorFromHex(colorHex.wrappedValue ?? radialDefaultColorHex))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Edit Category").font(.headline)
-
-            HStack {
-                Text("Name").frame(width: 60, alignment: .leading)
-                TextField("Category name", text: $name)
-                    .textFieldStyle(.roundedBorder)
-            }
-            HStack {
-                Text("Icon").frame(width: 60, alignment: .leading)
-                TextField("SF Symbol name", text: $icon)
-                    .textFieldStyle(.roundedBorder)
-                Button { showIconPicker = true } label: {
-                    Image(systemName: icon)
-                        .font(.title3).frame(width: 30, height: 30)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+        HStack {
+            Text("Colour").frame(width: 70, alignment: .leading)
+            ColorPicker("", selection: $color, supportsOpacity: false)
+                .labelsHidden()
+                .disabled(colorHex == nil)
+                .onChange(of: color) { _, new in
+                    if colorHex != nil { colorHex = new.toHex() }
                 }
-                .buttonStyle(.plain)
-                .help("Browse icons")
-            }
-            HStack {
-                Text("Color").frame(width: 60, alignment: .leading)
-                ColorPicker("", selection: $color, supportsOpacity: false)
-                    .labelsHidden()
-            }
-
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Save") { save(); dismiss() }
-                    .keyboardShortcut(.defaultAction)
-            }
+            Toggle(isRoot ? "Use default" : "Match parent", isOn: Binding(
+                get: { colorHex == nil },
+                set: { inherit in colorHex = inherit ? nil : color.toHex() }
+            ))
+            .toggleStyle(.checkbox)
+            .font(.callout)
+            Spacer()
         }
-        .padding(20)
-        .frame(width: 340)
-        .sheet(isPresented: $showIconPicker) {
-            SFSymbolPicker(selectedSymbol: $icon)
-        }
-    }
-
-    private func save() {
-        let store = RadialMenuStore.shared
-        guard catIdx < store.categories.count else { return }
-        store.categories[catIdx].label = name
-        store.categories[catIdx].systemImage = icon
-        store.categories[catIdx].colorHex = color.toHex()
     }
 }
 
@@ -908,6 +876,7 @@ private struct CategoryEditorSheet: View {
 
 private struct ActionEditorSheet: View {
     let path: [Int]
+    let store: RadialMenuStore
     @State private var draft: RadialAction
     @State private var recorder = KeyRecorder()
     @State private var showIconPicker = false
@@ -915,9 +884,10 @@ private struct ActionEditorSheet: View {
     @State private var isLoadingShortcuts = false
     @Environment(\.dismiss) var dismiss
 
-    init(path: [Int]) {
+    init(path: [Int], store: RadialMenuStore) {
         self.path = path
-        _draft = State(initialValue: RadialMenuStore.shared.actionAt(path: path) ?? RadialAction(
+        self.store = store
+        _draft = State(initialValue: store.actionAt(path: path) ?? RadialAction(
             id: UUID().uuidString, label: "?", systemImage: "questionmark", actionType: .keyboardShortcut, actionConfig: .init()))
     }
 
@@ -926,10 +896,15 @@ private struct ActionEditorSheet: View {
             Text("Edit Action").font(.headline)
 
             // Name
-            HStack {
+            HStack(alignment: .top) {
                 Text("Name").frame(width: 70, alignment: .leading)
-                TextField("Action name", text: $draft.label)
-                    .textFieldStyle(.roundedBorder)
+                VStack(alignment: .leading, spacing: 3) {
+                    TextField("Action name", text: $draft.label, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...2)
+                    Text("⌥Return starts a second line in the menu")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
             }
             if shouldShowSymbolPicker {
                 HStack {
@@ -958,6 +933,9 @@ private struct ActionEditorSheet: View {
                     if newType == .openApplication, draft.actionConfig.useAppIcon == nil {
                         draft.actionConfig.useAppIcon = true
                     }
+                    if newType.isFileTarget, draft.actionConfig.useFileIcon == nil {
+                        draft.actionConfig.useFileIcon = true
+                    }
                     if newType == .automation, (draft.actionConfig.automationSteps ?? []).isEmpty {
                         draft.actionConfig.automationSteps = [
                             AutomationStep(actionType: .shortcutsApp, config: .init(), delayAfterMs: 1000)
@@ -966,6 +944,8 @@ private struct ActionEditorSheet: View {
                 }
             }
 
+            ItemColorRow(colorHex: $draft.colorHex, isRoot: path.count == 1)
+
             Divider()
 
             // Type-specific configuration
@@ -973,6 +953,8 @@ private struct ActionEditorSheet: View {
                 switch draft.actionType {
                 case .keyboardShortcut: keyboardConfig
                 case .openApplication: appConfig
+                case .openFolder, .openFile: fileTargetConfig
+                case .openURL:         urlConfig
                 case .shortcutsApp:    shortcutsConfig
                 case .shellCommand:    shellConfig
                 case .mediaControl:    mediaConfig
@@ -1000,7 +982,9 @@ private struct ActionEditorSheet: View {
     }
 
     private var shouldShowSymbolPicker: Bool {
-        draft.actionType != .openApplication || !(draft.actionConfig.useAppIcon ?? true)
+        if draft.actionType == .openApplication { return !(draft.actionConfig.useAppIcon ?? true) }
+        if draft.actionType.isFileTarget { return !(draft.actionConfig.useFileIcon ?? true) }
+        return true
     }
 
     // MARK: Keyboard config
@@ -1010,6 +994,10 @@ private struct ActionEditorSheet: View {
             HStack {
                 Text("Shortcut").frame(width: 70, alignment: .leading)
                 Button {
+                    if recorder.isRecording {
+                        recorder.stop()
+                        return
+                    }
                     recorder.onCapture = { code, label, cmd, shift, opt, ctrl in
                         draft.actionConfig.keyCode = code
                         draft.actionConfig.keyLabel = label
@@ -1103,6 +1091,98 @@ private struct ActionEditorSheet: View {
                         .resizable()
                         .frame(width: 30, height: 30)
                 }
+            }
+        }
+    }
+
+    // MARK: Folder / file config
+
+    private var isFolderTarget: Bool { draft.actionType == .openFolder }
+
+    private var fileTargetConfig: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(isFolderTarget ? "Folder" : "File").frame(width: 70, alignment: .leading)
+                Text(draft.actionConfig.targetPath ?? (isFolderTarget ? "No folder selected" : "No file selected"))
+                    .font(.callout)
+                    .foregroundStyle(draft.actionConfig.targetPath == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button("Browse…") {
+                    let panel = NSOpenPanel()
+                    panel.title = isFolderTarget ? "Choose Folder" : "Choose File"
+                    panel.allowsMultipleSelection = false
+                    panel.canChooseDirectories = isFolderTarget
+                    panel.canChooseFiles = !isFolderTarget
+                    panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+                    if panel.runModal() == .OK, let url = panel.url {
+                        draft.actionConfig.targetPath = url.path
+                        if draft.label == "New Action" {
+                            draft.label = url.deletingPathExtension().lastPathComponent
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+
+            HStack(spacing: 8) {
+                Spacer().frame(width: 70)
+                Toggle("Use the item's own icon", isOn: Binding(
+                    get: { draft.actionConfig.useFileIcon ?? true },
+                    set: { draft.actionConfig.useFileIcon = $0 }
+                ))
+                .disabled(draft.actionConfig.targetPath == nil)
+                Spacer()
+                if draft.actionConfig.useFileIcon ?? true,
+                   let path = draft.actionConfig.targetPath,
+                   let icon = AppIconCache.icon(forFilePath: path) {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 30, height: 30)
+                }
+            }
+
+            if let path = draft.actionConfig.targetPath,
+               !FileManager.default.fileExists(atPath: path) {
+                HStack(spacing: 6) {
+                    Spacer().frame(width: 64)
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text("This item no longer exists — the action will do nothing.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: URL config
+
+    private var urlConfig: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("URL").frame(width: 70, alignment: .leading)
+                TextField("https://example.com", text: Binding(
+                    get: { draft.actionConfig.targetURL ?? "" },
+                    set: { draft.actionConfig.targetURL = $0.isEmpty ? nil : $0 }
+                ))
+                .textFieldStyle(.roundedBorder)
+            }
+            HStack(spacing: 6) {
+                Spacer().frame(width: 70)
+                if let raw = draft.actionConfig.targetURL, !raw.isEmpty {
+                    if let url = ActionExecutor.normalizedURL(raw) {
+                        Text("Opens \(url.absoluteString)")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle)
+                    } else {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        Text("Not a valid URL.").font(.caption).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("Any scheme works — https, mailto, or an app's own like raycast://")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
             }
         }
     }
@@ -1273,7 +1353,6 @@ private struct ActionEditorSheet: View {
     }
 
     private func save() {
-        let store = RadialMenuStore.shared
         guard store.actionAt(path: path) != nil else { return }
         // Preserve existing children when saving edits.
         if let existing = store.actionAt(path: path) {
@@ -1319,6 +1398,8 @@ private struct AutomationStepEditor: View {
                 switch step.actionType {
                 case .keyboardShortcut: keyboardStep
                 case .openApplication:  appStep
+                case .openFolder, .openFile: fileTargetStep
+                case .openURL:          urlStep
                 case .shortcutsApp:     shortcutStep
                 case .shellCommand:     shellStep
                 case .mediaControl:     mediaStep
@@ -1350,6 +1431,10 @@ private struct AutomationStepEditor: View {
     private var keyboardStep: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
+                if recorder.isRecording {
+                    recorder.stop()
+                    return
+                }
                 recorder.onCapture = { code, label, cmd, shift, opt, ctrl in
                     step.config.keyCode = code
                     step.config.keyLabel = label
@@ -1398,6 +1483,38 @@ private struct AutomationStepEditor: View {
             }
             .buttonStyle(.bordered)
         }
+    }
+
+    private var fileTargetStep: some View {
+        let wantsFolder = step.actionType == .openFolder
+        return HStack {
+            Text(step.config.targetPath ?? (wantsFolder ? "No folder selected" : "No file selected"))
+                .font(.caption)
+                .foregroundStyle(step.config.targetPath == nil ? .secondary : .primary)
+                .lineLimit(1).truncationMode(.middle)
+            Spacer()
+            Button("Browse…") {
+                let panel = NSOpenPanel()
+                panel.title = wantsFolder ? "Choose Folder" : "Choose File"
+                panel.allowsMultipleSelection = false
+                panel.canChooseDirectories = wantsFolder
+                panel.canChooseFiles = !wantsFolder
+                panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+                if panel.runModal() == .OK, let url = panel.url {
+                    step.config.targetPath = url.path
+                }
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var urlStep: some View {
+        TextField("https://example.com", text: Binding(
+            get: { step.config.targetURL ?? "" },
+            set: { step.config.targetURL = $0.isEmpty ? nil : $0 }
+        ))
+        .textFieldStyle(.roundedBorder)
+        .font(.caption)
     }
 
     private var shortcutStep: some View {
@@ -1473,29 +1590,38 @@ private struct AutomationStepEditor: View {
 
 private struct SubcategoryEditorSheet: View {
     let path: [Int]
+    let store: RadialMenuStore
     @State private var name: String
     @State private var icon: String
+    @State private var colorHex: String?
     @State private var showIconPicker = false
     @Environment(\.dismiss) var dismiss
 
-    init(path: [Int]) {
+    init(path: [Int], store: RadialMenuStore) {
         self.path = path
-        let action = RadialMenuStore.shared.actionAt(path: path)
+        self.store = store
+        let action = store.actionAt(path: path)
         _name = State(initialValue: action?.label ?? "")
         _icon = State(initialValue: action?.systemImage ?? "folder.fill")
+        _colorHex = State(initialValue: action?.colorHex)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Edit Subcategory").font(.headline)
+            Text(path.count == 1 ? "Edit Category" : "Edit Subcategory").font(.headline)
 
-            HStack {
-                Text("Name").frame(width: 60, alignment: .leading)
-                TextField("Subcategory name", text: $name)
-                    .textFieldStyle(.roundedBorder)
+            HStack(alignment: .top) {
+                Text("Name").frame(width: 70, alignment: .leading)
+                VStack(alignment: .leading, spacing: 3) {
+                    TextField("Name", text: $name, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...2)
+                    Text("⌥Return starts a second line in the menu")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
             }
             HStack {
-                Text("Icon").frame(width: 60, alignment: .leading)
+                Text("Icon").frame(width: 70, alignment: .leading)
                 TextField("SF Symbol name", text: $icon)
                     .textFieldStyle(.roundedBorder)
                 Button { showIconPicker = true } label: {
@@ -1507,6 +1633,8 @@ private struct SubcategoryEditorSheet: View {
                 .help("Browse icons")
             }
 
+            ItemColorRow(colorHex: $colorHex, isRoot: path.count == 1)
+
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -1516,17 +1644,17 @@ private struct SubcategoryEditorSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 340)
+        .frame(width: 360)
         .sheet(isPresented: $showIconPicker) {
             SFSymbolPicker(selectedSymbol: $icon)
         }
     }
 
     private func save() {
-        let store = RadialMenuStore.shared
         guard var action = store.actionAt(path: path) else { return }
         action.label = name
         action.systemImage = icon
+        action.colorHex = colorHex
         store.setAction(action, at: path)
     }
 }

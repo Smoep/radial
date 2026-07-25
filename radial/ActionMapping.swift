@@ -6,10 +6,16 @@ import Observation
 enum ActionType: String, Codable, CaseIterable {
     case keyboardShortcut = "Keyboard Shortcut"
     case openApplication  = "Open Application"
+    case openFolder       = "Open Folder"
+    case openFile         = "Open File"
+    case openURL          = "Open URL"
     case shortcutsApp     = "Shortcuts App"
     case shellCommand     = "Shell Command"
     case mediaControl     = "Media Control"
     case automation       = "Automation"
+
+    /// True for the types that open a file-system target chosen with a panel.
+    var isFileTarget: Bool { self == .openFolder || self == .openFile }
 }
 
 enum MediaActionType: String, Codable, CaseIterable {
@@ -40,6 +46,12 @@ struct ActionMapping: Codable, Identifiable, Equatable {
     // Open application
     var appPath: String = ""
 
+    // Open folder / file
+    var targetPath: String = ""
+
+    // Open URL
+    var targetURL: String = ""
+
     // macOS Shortcuts app
     var shortcutName: String = ""
 
@@ -65,6 +77,12 @@ struct ActionMapping: Codable, Identifiable, Equatable {
         case .openApplication:
             let name = URL(fileURLWithPath: appPath).deletingPathExtension().lastPathComponent
             return name.isEmpty ? appPath : name
+        case .openFolder, .openFile:
+            let name = URL(fileURLWithPath: targetPath).lastPathComponent
+            return name.isEmpty ? targetPath : name
+        case .openURL:
+            guard let host = URL(string: targetURL)?.host else { return targetURL }
+            return host
         case .shortcutsApp:
             return shortcutName.isEmpty ? "Shortcut" : shortcutName
         case .shellCommand:

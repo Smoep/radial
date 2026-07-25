@@ -437,7 +437,35 @@ for (i, char) in chars.enumerated() {
 }
 ```
 
-Character width approximation: `fontSize * 0.55`.
+Glyph advance widths live in `LabelMetrics` (bottom of `SelectionOverlay.swift`),
+a pure enum so it can be unit-tested without a window. Measured in the actual
+rounded-semibold system font:
+
+| Script | Advance (em) | Ink (em) | Notes |
+|---|---|---|---|
+| Latin a–z | 0.55 | 0.45–0.89 | Enough side bearing to absorb curve compression |
+| CJK | 1.15 | 0.79–0.91 | Extra tracking for curved-baseline compression |
+| Full-width punct. | 1.15 | low | Same Unicode ranges as CJK |
+| Emoji | 1.45 | 1.25 | Far wider than any text glyph — must be detected first |
+| Whitespace | 0.35 | — | |
+
+**Emoji detection**: use `scalar.properties.isEmojiPresentation || scalar.value == 0xFE0F`
+— NOT `Character.isEmoji`, which is also true of digits and `#`.
+
+**Curve compression**: characters are spaced by arc length at the label radius,
+but each glyph is a square centred there. Its inner edge sits at `radius - size/2`,
+where the same angle spans `(radius - size/2)/radius` less arc. Latin's
+built-in side bearing covers this. CJK and emoji need explicit extra tracking.
+
+**Shrink-to-fit floor**: relative to the configured size (`max(8, size * 0.75)`).
+A flat 8pt floor made CJK unreadable at any slider setting; the relative floor
+lets the Label Font Size setting have real effect while still ellipsizing rather
+than collapsing to unreadable sizes.
+
+**Two-line wrapping**: `drawCurvedLabel` checks for an explicit newline first
+(⌥Return in the editor), then falls back to auto-split if Wrap Labels is on.
+The split is balanced by glyph-unit count (not character count) so CJK wraps
+cleanly. Explicit breaks are honoured even when Wrap Labels is off.
 
 ### 6.6 Rotated SF Symbol Icons — Never Upside-Down
 
@@ -611,7 +639,37 @@ Quote the app name to handle spaces. Escape single quotes:
 path.replacingOccurrences(of: "'", with: "'\\''")
 ```
 
-### 8.4 Shell Commands
+### 8.4 Open Folder / File
+
+Handed to Launch Services without touching the shell — folders open in Finder,
+files open in their default app. Path manipulation (spaces, quotes, `~`) can't
+be misinterpreted as shell syntax:
+
+```swift
+private static func openTarget(path: String) {
+    let expanded = (path.trimmingCharacters(in: .whitespacesAndNewlines) as NSString)
+        .expandingTildeInPath
+    guard FileManager.default.fileExists(atPath: expanded) else { return }
+    let url = URL(fileURLWithPath: expanded)
+    DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+}
+```
+
+### 8.5 Open URL
+
+Bare hostnames (no scheme) are promoted to `https://` so the action still works
+if the user omits it:
+
+```swift
+static func normalizedURL(_ raw: String) -> URL? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    if let url = URL(string: trimmed), let scheme = url.scheme, !scheme.isEmpty { return url }
+    return URL(string: "https://\(trimmed)")
+}
+```
+
+### 8.6 Shell Commands
 
 ```swift
 Task.detached {
@@ -623,6 +681,20 @@ Task.detached {
     try? process.run()
 }
 ```
+
+### 8.7 App-specific menus (AppMenuLibrary)
+
+`AppMenuLibrary` is a singleton that stores one `RadialMenuStore` per bundle ID.
+Running apps without an existing menu appear in "Add App…" picker; selecting one
+creates a store keyed `"appMenu_<bundleID>"`.
+
+When the overlay opens, `SessionEngine` checks the frontmost app and switches
+`activeItems` between the global menu and the app menu. The user can toggle
+between them while the overlay is open via the menu-switch key.
+
+Display names use the bundle filename, not `localizedName` — VS Code's process
+reports `localizedName` as "Code" but `bundleURL.lastPathComponent` is
+"Visual Studio Code.app".
 
 ---
 
@@ -868,6 +940,50 @@ things like `open -a`.
 ### 12.10 macOS key code for "5" is 23, not 22
 Key code 22 = "6". This was a silent bug that sent the wrong key. Always verify
 key codes against Apple's documented virtual key code table.
+
+### 12.11 `keyMonitor` not filtering key-repeat events
+
+**Bug**: The `.keyDown` global monitor that handles the menu-switch key had no
+`isARepeat` guard. Holding the key past the system repeat delay sent a stream
+of `toggleMenuScope()` calls — visually registered as a single press firing many times.
+
+**Fix**: Check `!event.isARepeat` before calling `toggleMenuScope()`. The `return`
+that swallows the event must still execute for repeats (to prevent a held key
+from reaching the pause-while-typing branch and dismissing the overlay):
+
+```swift
+if self.isMenuSwitchEvent(event) {
+    if !event.isARepeat { self.toggleMenuScope() }
+    return
+}
+```
+
+The adjacent `hotkeyMonitor` already had `case .keyDown where !event.isARepeat`.
+Apply the same guard to any new key handler in `keyMonitor`.
+
+### 12.12 CJK and emoji labels colliding / shrinking
+
+**Bug (CJK)**: Glyph width was approximated at 0.55 em (Latin) for all characters.
+CJK glyphs draw ~0.91 em of ink, and the curved baseline compresses spacing
+further at the inner edge. Labels appeared too tight and sometimes touching.
+
+**Bug (emoji)**: Emoji draw 1.25 em of ink at 11pt but were allocated 0.55 em —
+less than half their actual width. The character after an emoji always overlapped it.
+
+**Bug (shrink floor)**: A flat 8pt minimum in the shrink-to-fit path meant the
+Label Font Size slider had no effect on CJK — all labels that exceeded their arc
+collapsed to 8pt regardless of the setting.
+
+**Fix**: Extract all metrics to `LabelMetrics` (testable without a window).
+Use measured advance values: CJK 1.15, emoji 1.45, Latin 0.55.
+Detect emoji via `isEmojiPresentation`, not `isEmoji`.
+Make the shrink floor relative: `max(8, requestedSize * 0.75)`.
+
+### 12.13 `localizedName` for VS Code returns "Code"
+
+`NSRunningApplication.localizedName` for VS Code is "Code", not the Finder name.
+Fixed in `AppMenuLibrary.displayName(for:)`: prefer the bundle URL's `lastPathComponent`
+(minus extension) over `localizedName`.
 
 ## 13. Unfixed / Remaining Issues
 

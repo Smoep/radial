@@ -34,6 +34,9 @@ struct SettingsData: Codable {
     var mouseButton: String?
     var mouseHoldDuration: Double?
     var mouseReleaseToSelect: Bool?
+    var menuSwitchEnabled: Bool?
+    var menuSwitchKeyCode: Int?
+    var menuSwitchKeyLabel: String?
 }
 
 /// Top-level backup document written to / read from disk.
@@ -41,8 +44,51 @@ struct RadialBackup: Codable {
     var schemaVersion: Int
     var exportedAt: Date
     var appVersion: String?
-    var categories: [RadialCategory]
+    /// Global Menu contents.
+    var items: [RadialAction]
     var settings: SettingsData
+    /// App-specific menus. Absent in schema 1 backups.
+    var appMenus: [AppMenuSnapshot]?
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, exportedAt, appVersion, items, categories, settings, appMenus
+    }
+
+    init(schemaVersion: Int, exportedAt: Date, appVersion: String?,
+         items: [RadialAction], settings: SettingsData, appMenus: [AppMenuSnapshot]?) {
+        self.schemaVersion = schemaVersion
+        self.exportedAt = exportedAt
+        self.appVersion = appVersion
+        self.items = items
+        self.settings = settings
+        self.appMenus = appMenus
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        exportedAt = try c.decode(Date.self, forKey: .exportedAt)
+        appVersion = try c.decodeIfPresent(String.self, forKey: .appVersion)
+        settings = try c.decode(SettingsData.self, forKey: .settings)
+        appMenus = try c.decodeIfPresent([AppMenuSnapshot].self, forKey: .appMenus)
+        if let items = try c.decodeIfPresent([RadialAction].self, forKey: .items) {
+            self.items = items
+        } else {
+            // Schema 1 and 2 backups stored the legacy category shape.
+            let legacy = try c.decodeIfPresent([RadialCategory].self, forKey: .categories) ?? []
+            items = legacy.map { $0.asAction }
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schemaVersion, forKey: .schemaVersion)
+        try c.encode(exportedAt, forKey: .exportedAt)
+        try c.encodeIfPresent(appVersion, forKey: .appVersion)
+        try c.encode(items, forKey: .items)
+        try c.encode(settings, forKey: .settings)
+        try c.encodeIfPresent(appMenus, forKey: .appMenus)
+    }
 }
 
 // MARK: - AppSettings snapshot / apply
@@ -76,7 +122,10 @@ extension AppSettings {
             mouseEnabled: mouseEnabled,
             mouseButton: mouseButton.rawValue,
             mouseHoldDuration: mouseHoldDuration,
-            mouseReleaseToSelect: mouseReleaseToSelect
+            mouseReleaseToSelect: mouseReleaseToSelect,
+            menuSwitchEnabled: menuSwitchEnabled,
+            menuSwitchKeyCode: menuSwitchKeyCode,
+            menuSwitchKeyLabel: menuSwitchKeyLabel
         )
     }
 
@@ -109,6 +158,9 @@ extension AppSettings {
         if let v = d.mouseButton, let b = MouseButton(rawValue: v) { mouseButton = b }
         if let v = d.mouseHoldDuration { mouseHoldDuration = v }
         if let v = d.mouseReleaseToSelect { mouseReleaseToSelect = v }
+        if let v = d.menuSwitchEnabled { menuSwitchEnabled = v }
+        if let v = d.menuSwitchKeyCode { menuSwitchKeyCode = v }
+        if let v = d.menuSwitchKeyLabel { menuSwitchKeyLabel = v }
         flush()
     }
 }
@@ -116,7 +168,7 @@ extension AppSettings {
 // MARK: - Backup Service
 
 enum ConfigBackup {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 3
 
     /// Build a backup document from the live store and settings.
     static func makeBackup() -> RadialBackup {
@@ -125,8 +177,9 @@ enum ConfigBackup {
             schemaVersion: currentSchemaVersion,
             exportedAt: Date(),
             appVersion: appVersion,
-            categories: RadialMenuStore.shared.categories,
-            settings: AppSettings.shared.backupSnapshot
+            items: RadialMenuStore.shared.items,
+            settings: AppSettings.shared.backupSnapshot,
+            appMenus: AppMenuLibrary.shared.snapshot()
         )
     }
 
@@ -199,7 +252,8 @@ enum ConfigBackup {
         let confirm = NSAlert()
         confirm.alertStyle = .warning
         confirm.messageText = "Replace current configuration?"
-        confirm.informativeText = "This will overwrite your menu (\(backup.categories.count) categories) and all settings with the contents of this backup. This cannot be undone."
+        confirm.informativeText = "This will overwrite your menus (\(backup.items.count) global items"
+            + appMenuSummary(backup) + ") and all settings with the contents of this backup. This cannot be undone."
         confirm.addButton(withTitle: "Replace")
         confirm.addButton(withTitle: "Cancel")
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
@@ -208,12 +262,23 @@ enum ConfigBackup {
 
         presentAlert(style: .informational,
                      title: "Import Complete",
-                     message: "Restored \(backup.categories.count) categories and your settings.")
+                     message: "Restored \(backup.items.count) global items"
+                            + appMenuSummary(backup) + " and your settings.")
+    }
+
+    private static func appMenuSummary(_ backup: RadialBackup) -> String {
+        let count = backup.appMenus?.count ?? 0
+        guard count > 0 else { return "" }
+        return count == 1 ? " and 1 app menu" : " and \(count) app menus"
     }
 
     /// Apply a decoded backup to the live store and settings.
     static func apply(_ backup: RadialBackup) {
-        RadialMenuStore.shared.categories = backup.categories
+        RadialMenuStore.shared.items = backup.items
+        // Schema 1 backups have no app menus; leave existing ones untouched.
+        if let appMenus = backup.appMenus {
+            AppMenuLibrary.shared.replaceAll(with: appMenus)
+        }
         AppSettings.shared.apply(backup.settings)
     }
 
