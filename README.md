@@ -1,6 +1,8 @@
 # Radial
 
-**A macOS radial action launcher driven entirely by your trackpad.**
+**Execute any action in one gesture — touch, slide, lift.**
+
+Radial is a macOS launcher that lives in your trackpad. Touch and hold anywhere, a circular menu appears at your cursor, slide your finger to what you want, and lift. No mouse movement, no reaching for a keyboard shortcut, no hunting through menus — just one continuous motion.
 
 ## Download
 
@@ -11,61 +13,53 @@ Unzip and drag **Radial.app** to your Applications folder.
 > **First launch:** macOS will show a security warning because the app is not signed with an Apple Developer certificate.
 > Right-click (or Control-click) the app → **Open** → **Open**. You only need to do this once.
 
-Touch and hold the trackpad, slide your finger to the action you want, then lift. No mouse movement, no keyboard hunting — just one fluid gesture.
-
 ![Radial Menu Concept](Radial%20Menu%20Concept%20Dma.jpg)
 
 ---
 
 ## How it works
 
-1. **Touch & hold** anywhere on the trackpad — a progress ring fills over ~0.6 s.
-2. **The pie menu appears** at your cursor, organized in concentric rings.
-3. **Slide outward** to a category slice, then further out to an action.
-4. **Lift your finger** — the action fires instantly.
+1. **Touch & hold** — rest your finger on the trackpad for about half a second. A progress ring shows you it's counting.
+2. **The menu appears** — a circular overlay opens right at your cursor, arranged in rings. Categories in the inner ring, actions in the outer ring.
+3. **Slide to your action** — no clicking, just move your finger. The slice you're on highlights instantly.
+4. **Lift to confirm** — the action fires the moment your finger leaves the trackpad.
 
-The center of the menu is always a cancel zone. Your finger never leaves the trackpad.
-
----
-
-## What you can trigger
-
-- **Keyboard shortcuts** — any key combo (recorded live from your keyboard)
-- **Launch apps** — open any application instantly
-- **Open a folder** — jump straight to a Finder directory
-- **Open a file** — open any file in its default app
-- **Open a URL** — web links, `mailto:`, or any custom URL scheme
-- **Shell commands** — run arbitrary scripts
-- **Media controls** — play/pause, next/previous track, volume, mute
-- **macOS Shortcuts** — trigger any Shortcuts app workflow
+The center is always a cancel zone. If you change your mind, slide back to the middle and lift.
 
 ---
 
-## Features
+## What you can do
 
-- Unlimited nesting — categories can contain subcategories at any depth
-- Fully customizable menu via a built-in drag-and-drop editor
-- Two selection modes: **lift-to-select** (fast) or **click-to-confirm** (forgiving)
-- **App-specific menus** — assign a custom radial menu to any running application
-- **Switch between global and app menu** while the overlay is open (configurable key, default Space)
-- Label wrapping — long names split onto two curved arcs automatically, or use ⌥Return to set a manual break
-- Full support for CJK text and emoji in labels (correct spacing and sizing)
-- Export / import your full configuration as a JSON backup
-- Lives in the menu bar — no Dock icon, zero visual clutter
-- Glass-style overlay aesthetic native to macOS 26
-- Per-app awareness — pause tracking when you don't need it
-- Diagnostic logging toggle for troubleshooting (off by default)
+- **Run a keyboard shortcut** — trigger any key combination in the app that's currently in focus
+- **Launch an app** — open any application in one gesture
+- **Open a folder** — jump straight to a location in Finder
+- **Open a file** — open any document in its default app
+- **Open a URL** — a webpage, a mail link, or anything with a URL scheme
+- **Control media** — play/pause, skip tracks, adjust volume
+- **Run a shell command** — execute any script or terminal command in the background
+- **Trigger a Shortcut** — run any workflow from the macOS Shortcuts app
+
+---
+
+## What makes it flexible
+
+- **Different menus per app** — set up a separate menu for each application. Switching to Chrome, VS Code, or Figma automatically loads the right menu. Press Space while the overlay is open to toggle between the app menu and your global one.
+- **Unlimited depth** — categories can contain subcategories, which can contain subcategories. Build as deep a hierarchy as you need.
+- **Drag-and-drop editor** — reorder, nest, and color-code everything from the settings window. No config files.
+- **Smart labels** — long names wrap onto two lines automatically. Use ⌥Return in the name field to set the break point yourself. CJK and emoji are supported.
+- **Two ways to select** — lift your finger to confirm (fast), or keep the overlay open and click (more forgiving for new users).
+- **Backup & restore** — export your entire setup as a file and import it on another machine.
+- **Quiet by default** — no Dock icon, no windows until you open settings from the menu bar.
 
 ---
 
 ## Requirements
 
 - macOS 26 (Tahoe) or later
-- Xcode 26+ to build from source
 
 ---
 
-## Build & install
+## Build from source
 
 ```bash
 git clone https://github.com/Smoep/radial.git
