@@ -152,7 +152,7 @@ private struct SFSymbolPicker: View {
                         Button {
                             selectedSymbol = name
                         } label: {
-                            Image(systemName: name)
+                            ActionIconLabel(name: name)
                                 .font(.system(size: 18))
                                 .frame(width: 40, height: 40)
                                 .background(selectedSymbol == name ? Color.accentColor.opacity(0.3) : Color.clear,
@@ -172,6 +172,20 @@ private struct SFSymbolPicker: View {
 }
 
 // MARK: - Key Recorder
+
+/// Shows an icon that may be either an SF Symbol name or a literal glyph such
+/// as an emoji or a CJK character.
+struct ActionIconLabel: View {
+    let name: String
+
+    var body: some View {
+        if IconGlyph.isSymbolName(name) {
+            Image(systemName: name)
+        } else {
+            Text(IconGlyph.glyph(name))
+        }
+    }
+}
 
 @Observable
 final class KeyRecorder {
@@ -589,7 +603,7 @@ private struct FloatingDragPreview: View {
     var body: some View {
         if drag.isDragging, let action = drag.sourceAction {
             HStack(spacing: 8) {
-                Image(systemName: action.isSubcategory ? "folder.fill" : action.systemImage)
+                ActionIconLabel(name: action.isSubcategory ? "folder.fill" : action.systemImage)
                     .foregroundStyle(action.isSubcategory ? .orange : .secondary)
                 Text(action.singleLineLabel).font(.callout)
             }
@@ -655,6 +669,44 @@ private struct ActionListView: View {
                         Text(shortcutBadge(action))
                             .font(.caption).foregroundStyle(.tertiary)
                             .lineLimit(1)
+                    }
+
+                    Button {
+                        store.duplicateAction(at: actionPath)
+                    } label: {
+                        Image(systemName: "plus.square.on.square")
+                            .font(.caption)
+                            .foregroundStyle(.secondary.opacity(0.6))
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Duplicate")
+
+                    let destinations = AppMenuLibrary.shared.copyDestinations(excluding: store)
+                    if !destinations.isEmpty {
+                        Menu {
+                            ForEach(destinations) { destination in
+                                Menu(destination.name) {
+                                    Button("Copy here") {
+                                        send(action, to: destination, removingFrom: nil)
+                                    }
+                                    Button("Move here") {
+                                        send(action, to: destination, removingFrom: actionPath)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "arrow.right.square")
+                                .font(.caption)
+                                .foregroundStyle(.secondary.opacity(0.6))
+                                .frame(width: 24, height: 24)
+                                .contentShape(Rectangle())
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .frame(width: 24)
+                        .help("Copy or move to another menu")
                     }
 
                     Button {
@@ -799,6 +851,14 @@ private struct ActionListView: View {
         else { expanded.insert(id) }
     }
 
+    /// Append an item to another menu's first ring. The copy is re-keyed so the
+    /// two menus never share identifiers. Passing `removingFrom` turns the copy
+    /// into a move by deleting the original afterwards.
+    private func send(_ action: RadialAction, to destination: MenuDestination, removingFrom sourcePath: [Int]?) {
+        destination.store.appendAction(action.duplicated(), at: [])
+        if let sourcePath { store.removeAction(at: sourcePath) }
+    }
+
     @ViewBuilder
     private func rowIcon(_ action: RadialAction, color: Color) -> some View {
         if !action.isSubcategory,
@@ -811,7 +871,7 @@ private struct ActionListView: View {
                 .frame(width: 24, height: 24)
                 .frame(width: 28)
         } else {
-            Image(systemName: action.isSubcategory ? "folder.fill" : action.systemImage)
+            ActionIconLabel(name: action.isSubcategory ? "folder.fill" : action.systemImage)
                 .font(isRoot ? .title3 : .body)
                 .foregroundStyle(color)
                 .frame(width: isRoot ? 24 : 20)
@@ -909,10 +969,10 @@ private struct ActionEditorSheet: View {
             if shouldShowSymbolPicker {
                 HStack {
                     Text("Icon").frame(width: 70, alignment: .leading)
-                    TextField("SF Symbol", text: $draft.systemImage)
+                    TextField("SF Symbol, or paste an emoji", text: $draft.systemImage)
                         .textFieldStyle(.roundedBorder)
                     Button { showIconPicker = true } label: {
-                        Image(systemName: draft.systemImage)
+                        ActionIconLabel(name: draft.systemImage)
                             .font(.title3).frame(width: 30, height: 30)
                             .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
                     }

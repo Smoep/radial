@@ -87,6 +87,34 @@ final class MouseTriggerService {
         }
     }
 
+    /// True when `button` is bound to Radial and safe to consume outright.
+    ///
+    /// The activating press must be swallowed too, not just clicks made while
+    /// the menu is open: most text views collapse the selection on any mouse
+    /// down, so letting the trigger through would drop the selection before the
+    /// menu even appeared. The left button is never claimed — ordinary clicking
+    /// and drag-selection depend on it reaching the app.
+    func ownsTriggerButton(_ button: Int) -> Bool {
+        guard settings?.mouseEnabled == true,
+              button != MouseButton.left.buttonNumber,
+              button == triggerButton else { return false }
+        return !isMouseOverOwnWindow()
+    }
+
+    /// Handle a click that `MouseEventTap` swallowed.
+    ///
+    /// A suppressed event is removed from the stream before any app sees it,
+    /// including this service's own global monitor, so the tap routes it here
+    /// instead. Without this the click would be blocked but never act.
+    func handleSuppressedClick(type: CGEventType, button: Int) {
+        mouseLog.info("suppressed click type=\(type.rawValue, privacy: .public) button=\(button, privacy: .public)")
+        switch type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown: handleDown(button: button)
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp:       handleUp(button: button)
+        default: break
+        }
+    }
+
     private var triggerButton: Int { settings?.mouseButton.buttonNumber ?? 2 }
 
     private func handleDown(button: Int) {

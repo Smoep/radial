@@ -108,6 +108,9 @@ final class SessionEngine {
     let settings: AppSettings
     let trackpad: TrackpadService
     private let mouse = MouseTriggerService()
+    /// Consumes the clicks and keys that belong to Radial so they never reach
+    /// the focused app as well.
+    private let inputTap = InputEventTap()
     private let stateMachine: GestureStateMachine
     private let selectionOverlay = SelectionOverlay()
 
@@ -252,6 +255,47 @@ final class SessionEngine {
         mouse.onOpen             = { [weak self] in self?.trackpad.engage(external: true) }
         mouse.onDismiss          = { [weak self] in self?.dismissOverlay() }
         mouse.onSelect           = { [weak self] in self?.trackpad.triggerExternalRelease() }
+
+        // Input that belongs to Radial must not reach the focused app as well.
+        // A click would move the caret and drop the user's text selection, and
+        // the menu-switch key would be typed into whatever field has focus.
+        // Consumed events bypass the monitors, so act on them here.
+        inputTap.shouldConsume = { [weak self] type, event in
+            guard let self else { return false }
+            switch type {
+            case .keyDown, .keyUp:
+                return self.consumeKeyEvent(type: type, event: event)
+            default:
+                let button = Int(event.getIntegerValueField(.mouseEventButtonNumber))
+                guard self.trackpad.isEngaged || self.mouse.ownsTriggerButton(button) else {
+                    return false
+                }
+                self.mouse.handleSuppressedClick(type: type, button: button)
+                return true
+            }
+        }
+    }
+
+    /// Swallow the keys Radial owns, and act on them in the monitors' place.
+    ///
+    /// Only the menu-switch key while the overlay is open, and a modifier-based
+    /// combo hotkey, are claimed. Double-tap hotkeys are deliberately left alone:
+    /// a bare key can't be identified as the first tap of a pair, so consuming it
+    /// would stop that key from ever being typed.
+    private func consumeKeyEvent(type: CGEventType, event: CGEvent) -> Bool {
+        guard let nsEvent = NSEvent(cgEvent: event) else { return false }
+
+        if isMenuSwitchEvent(nsEvent) {
+            if type == .keyDown, !nsEvent.isARepeat { toggleMenuScope() }
+            return true
+        }
+
+        guard settings.hotkeyMode == .combo, isHotkeyEvent(nsEvent) else { return false }
+        if type == .keyDown, !nsEvent.isARepeat {
+            if trackpad.isEngaged { dismissOverlay() }
+            else { trackpad.engage(external: true) }
+        }
+        return true
     }
 
     // MARK: - Lifecycle
@@ -262,6 +306,7 @@ final class SessionEngine {
         stateMachine.reset()
         trackpad.start()
         mouse.start()
+        inputTap.start()
 
         // Combined monitor: pause-while-typing detection + hotkey trigger.
         // One monitor handles both so the hotkey is never treated as a "typing" keystroke.
@@ -325,6 +370,7 @@ final class SessionEngine {
         pollTimer = nil
         trackpad.stop()
         mouse.stop()
+        inputTap.stop()
         stateMachine.reset()
         if let m = keyMonitor    { NSEvent.removeMonitor(m); keyMonitor    = nil }
         if let m = hotkeyMonitor { NSEvent.removeMonitor(m); hotkeyMonitor = nil }
@@ -714,14 +760,24 @@ final class SessionEngine {
 
     // MARK: - Menu scope
 
-    /// Pick the menu for the app that is frontmost right now. Called once per
-    /// open so the menu can't change mid-gesture.
+    /// Pick the menu for the app the cursor is hovering, falling back to the
+    /// frontmost app. Called once per open so the menu can't change mid-gesture.
     private func resolveMenuScope() {
         switchProgress = 1
         outgoingItems = []
 
         let library = AppMenuLibrary.shared
-        if let app = NSWorkspace.shared.frontmostApplication,
+        // Hovering a background window should load that app's menu without
+        // requiring a click to activate it first. Whatever is under the cursor
+        // decides the scope outright: if that app has no menu the user gets the
+        // global one, not whichever app happens to be frontmost. Only an empty
+        // hit test — the desktop, or a window we can't attribute — defers to the
+        // frontmost app.
+        let hovered = Self.appUnderCursor()
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let target = hovered ?? frontmost
+
+        if let app = target,
            let bundleID = app.bundleIdentifier,
            bundleID != Bundle.main.bundleIdentifier,
            let items = library.items(for: bundleID) {
@@ -736,6 +792,36 @@ final class SessionEngine {
             appMenuItems = []
             showingAppMenu = false
         }
+
+        sessionLog.info("resolveMenuScope: hover=\(hovered?.bundleIdentifier ?? "nil", privacy: .public) front=\(frontmost?.bundleIdentifier ?? "nil", privacy: .public) using=\(self.appMenuRef?.bundleID ?? "global", privacy: .public)")
+    }
+
+    /// The app owning the topmost normal window under the mouse cursor.
+    ///
+    /// `CGWindowListCopyWindowInfo` returns windows front-to-back, so the first
+    /// hit is the one the user sees. Only layer-0 windows are considered so the
+    /// menu bar, Dock and other chrome don't win the hit test. Window bounds are
+    /// in flipped display coordinates, unlike `NSEvent.mouseLocation`.
+    private static func appUnderCursor() -> NSRunningApplication? {
+        guard let primary = NSScreen.screens.first else { return nil }
+        let mouse = NSEvent.mouseLocation
+        let point = CGPoint(x: mouse.x, y: primary.frame.maxY - mouse.y)
+
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        for window in windows {
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
+                  let pid = window[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID,
+                  let boundsDict = window[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict),
+                  bounds.contains(point) else { continue }
+            return NSRunningApplication(processIdentifier: pid)
+        }
+        return nil
     }
 
     /// Toggle between the app menu and the Global Menu. Temporary — the next

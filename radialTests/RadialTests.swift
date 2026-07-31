@@ -27,6 +27,36 @@ struct RadialTests {
         #expect(ActionExecutor.shortcutURL(named: "") == nil)
     }
 
+    /// A duplicate must share no identifier with its source, at any depth:
+    /// ids drive SwiftUI identity, expansion state and drag paths.
+    @Test func duplicateRekeysEveryDescendant() {
+        let source = RadialAction(
+            id: "root", label: "Tools", systemImage: "folder.fill",
+            actionType: .keyboardShortcut, actionConfig: .init(),
+            children: [
+                RadialAction(id: "child", label: "Copy", systemImage: "doc",
+                             actionType: .keyboardShortcut, actionConfig: .init(),
+                             children: [
+                                RadialAction(id: "grandchild", label: "Deep", systemImage: "doc",
+                                             actionType: .keyboardShortcut, actionConfig: .init())
+                             ])
+            ])
+
+        let copy = source.duplicated()
+
+        func ids(_ action: RadialAction) -> [String] {
+            [action.id] + (action.children ?? []).flatMap(ids)
+        }
+        let sourceIDs = ids(source)
+        let copyIDs = ids(copy)
+
+        #expect(copyIDs.count == sourceIDs.count)
+        #expect(Set(copyIDs).count == copyIDs.count)          // no repeats inside the copy
+        #expect(Set(copyIDs).isDisjoint(with: Set(sourceIDs))) // nothing shared with the source
+        #expect(copy.label == source.label)                    // content is preserved
+        #expect(copy.children?.first?.children?.first?.label == "Deep")
+    }
+
 }
 
 // MARK: - Chinese label rendering

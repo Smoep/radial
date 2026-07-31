@@ -634,7 +634,9 @@ private struct OverlayRadialView: View {
         return halfSpan > 1.5 ? halfSpan : nil
     }
 
-    /// Draw an SF Symbol icon rotated to follow the arc at the given angle.
+    /// Draw an icon rotated to follow the arc at the given angle. The name is
+    /// either an SF Symbol or a literal glyph (emoji, letter, CJK character),
+    /// which is drawn as text so it renders instead of coming out blank.
     private func drawRotatedIcon(
         systemName: String,
         context: GraphicsContext,
@@ -650,9 +652,21 @@ private struct OverlayRadialView: View {
         var iconCtx = context
         iconCtx.translateBy(x: point.x, y: point.y)
         iconCtx.rotate(by: .radians(rotation))
+
+        let isSymbol = IconGlyph.isSymbolName(systemName)
+        let glyph = isSymbol ? systemName : IconGlyph.glyph(systemName)
+        // Glyphs render heavier than a symbol at the same point size, and each
+        // extra character has to fit the same slice, so they are set smaller.
+        let scale: CGFloat
+        switch glyph.count {
+        case 1:  scale = 0.9
+        case 2:  scale = 0.7
+        default: scale = 0.55
+        }
+        let content = isSymbol ? Text(Image(systemName: systemName)) : Text(glyph)
         iconCtx.draw(
-            Text(Image(systemName: systemName))
-                .font(.system(size: fontSize, weight: .medium))
+            content
+                .font(.system(size: isSymbol ? fontSize : fontSize * scale, weight: .medium))
                 .foregroundStyle(.white.opacity(opacity)),
             at: .zero
         )

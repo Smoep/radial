@@ -15,6 +15,17 @@ struct RadialAction: Codable, Identifiable {
     /// True if this action opens a deeper ring instead of executing.
     var isSubcategory: Bool { children != nil }
 
+    /// An independent copy carrying fresh identifiers.
+    ///
+    /// Every descendant is re-keyed too: ids drive SwiftUI identity, expansion
+    /// state and drag paths, so two items sharing one id would misbehave.
+    func duplicated() -> RadialAction {
+        var copy = self
+        copy.id = UUID().uuidString
+        copy.children = children?.map { $0.duplicated() }
+        return copy
+    }
+
     struct ActionConfig: Codable, Equatable {
         // Keyboard shortcut
         var keyCode: Int?
@@ -235,6 +246,17 @@ final class RadialMenuStore {
             guard index < siblings.count else { return }
             siblings.remove(at: index)
         }
+    }
+
+    /// Insert a copy of the item at `path` directly below it, and return the
+    /// new item's path so the caller can open or reveal it.
+    @discardableResult
+    func duplicateAction(at path: [Int]) -> [Int]? {
+        guard let index = path.last,
+              let action = actionAt(path: path) else { return nil }
+        let parentPath = Array(path.dropLast())
+        insertAction(action.duplicated(), at: parentPath, index: index + 1)
+        return parentPath + [index + 1]
     }
 
     /// Append an item to the ring addressed by `parentPath` (`[]` = first ring).

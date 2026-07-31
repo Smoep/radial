@@ -52,6 +52,13 @@ struct AppMenuSnapshot: Codable {
     }
 }
 
+/// A menu an item can be sent to from the editor.
+struct MenuDestination: Identifiable {
+    let id: String
+    let name: String
+    let store: RadialMenuStore
+}
+
 /// Registry of app-specific radial menus.
 ///
 /// The index (which apps have a menu) is stored under `radialAppMenuIndex`;
@@ -155,8 +162,23 @@ final class AppMenuLibrary {
         }
     }
 
-    // MARK: - Running applications
+    /// Every menu an item can be sent to: the Global Menu plus each app menu,
+    /// minus the one currently being edited.
+    func copyDestinations(excluding current: RadialMenuStore) -> [MenuDestination] {
+        var result: [MenuDestination] = []
+        if RadialMenuStore.shared !== current {
+            result.append(MenuDestination(id: "global",
+                                          name: "Global Menu",
+                                          store: RadialMenuStore.shared))
+        }
+        for ref in apps {
+            guard let store = store(for: ref.bundleID), store !== current else { continue }
+            result.append(MenuDestination(id: ref.bundleID, name: ref.name, store: store))
+        }
+        return result
+    }
 
+    // MARK: - Running applications
     /// Regular (Dock-visible) running apps that don't already have a menu,
     /// excluding Radial itself.
     func selectableRunningApps() -> [AppMenuRef] {
