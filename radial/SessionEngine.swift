@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import ApplicationServices
 import Observation
 import CoreGraphics
 import OSLog
@@ -265,6 +266,13 @@ final class SessionEngine {
             switch type {
             case .keyDown, .keyUp:
                 return self.consumeKeyEvent(type: type, event: event)
+            case .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
+                // Swallowing a drag would freeze the pointer, and selection is
+                // cursor-driven. Retyping it moves the cursor as usual while the
+                // app below sees no drag to extend its text selection with.
+                guard self.trackpad.isEngaged else { return false }
+                event.type = .mouseMoved
+                return false
             default:
                 let button = Int(event.getIntegerValueField(.mouseEventButtonNumber))
                 guard self.trackpad.isEngaged || self.mouse.ownsTriggerButton(button) else {
@@ -773,9 +781,18 @@ final class SessionEngine {
         // global one, not whichever app happens to be frontmost. Only an empty
         // hit test — the desktop, or a window we can't attribute — defers to the
         // frontmost app.
-        let hovered = Self.appUnderCursor()
+        let hovered = Self.windowUnderCursor()
         let frontmost = NSWorkspace.shared.frontmostApplication
-        let target = hovered ?? frontmost
+        let target = hovered?.app ?? frontmost
+
+        // Actions reach whichever app holds focus, so the hovered window is
+        // raised now — while the user is still choosing — not on selection.
+        // An already-active app still needs this: the hovered window can be
+        // behind another window of the same app.
+        var raise = "skip"
+        if let hovered {
+            raise = Self.raise(hovered)
+        }
 
         if let app = target,
            let bundleID = app.bundleIdentifier,
@@ -793,16 +810,22 @@ final class SessionEngine {
             showingAppMenu = false
         }
 
-        sessionLog.info("resolveMenuScope: hover=\(hovered?.bundleIdentifier ?? "nil", privacy: .public) front=\(frontmost?.bundleIdentifier ?? "nil", privacy: .public) using=\(self.appMenuRef?.bundleID ?? "global", privacy: .public)")
+        sessionLog.info("resolveMenuScope: hover=\(hovered?.app.bundleIdentifier ?? "nil", privacy: .public) front=\(frontmost?.bundleIdentifier ?? "nil", privacy: .public) using=\(self.appMenuRef?.bundleID ?? "global", privacy: .public) raise=\(raise, privacy: .public)")
     }
 
-    /// The app owning the topmost normal window under the mouse cursor.
+    /// A window under the cursor, with bounds in flipped display coordinates.
+    private struct HoveredWindow {
+        let app: NSRunningApplication
+        let bounds: CGRect
+    }
+
+    /// The topmost normal window under the mouse cursor.
     ///
     /// `CGWindowListCopyWindowInfo` returns windows front-to-back, so the first
     /// hit is the one the user sees. Only layer-0 windows are considered so the
     /// menu bar, Dock and other chrome don't win the hit test. Window bounds are
     /// in flipped display coordinates, unlike `NSEvent.mouseLocation`.
-    private static func appUnderCursor() -> NSRunningApplication? {
+    private static func windowUnderCursor() -> HoveredWindow? {
         guard let primary = NSScreen.screens.first else { return nil }
         let mouse = NSEvent.mouseLocation
         let point = CGPoint(x: mouse.x, y: primary.frame.maxY - mouse.y)
@@ -819,9 +842,73 @@ final class SessionEngine {
                   let boundsDict = window[kCGWindowBounds as String] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: boundsDict),
                   bounds.contains(point) else { continue }
-            return NSRunningApplication(processIdentifier: pid)
+            guard let app = NSRunningApplication(processIdentifier: pid) else { return nil }
+            return HoveredWindow(app: app, bounds: bounds)
         }
         return nil
+    }
+
+    /// Bring a hovered window to the front, returning a short log description.
+    ///
+    /// macOS ignores `NSRunningApplication.activate()` from a background agent
+    /// like Radial, so the Accessibility API does the work and the AppKit call
+    /// remains only as a fallback.
+    private static func raise(_ hovered: HoveredWindow) -> String {
+        let axApp = AXUIElementCreateApplication(hovered.app.processIdentifier)
+
+        var windows = axWindows(of: axApp)
+        var match = windows.first { covers(hovered.bounds, $0) }
+        var detail = ""
+
+        // Chromium and Electron apps publish no Accessibility tree until an
+        // assistive client asks for one.
+        if match == nil, windows.isEmpty {
+            AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            windows = axWindows(of: axApp)
+            match = windows.first { covers(hovered.bounds, $0) }
+            detail = "manual/"
+        }
+
+        if let match {
+            AXUIElementPerformAction(match, kAXRaiseAction as CFString)
+        }
+
+        var front = "active"
+        if !hovered.app.isActive {
+            let result = AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+            hovered.app.activate()
+            front = result == .success ? "ok" : "err\(result.rawValue)"
+        }
+
+        return "\(detail)\(match == nil ? "nomatch" : "win")(\(windows.count))/\(front)"
+    }
+
+    /// The Accessibility windows of an app, or an empty list if unavailable.
+    private static func axWindows(of axApp: AXUIElement) -> [AXUIElement] {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &value) == .success else {
+            return []
+        }
+        return value as? [AXUIElement] ?? []
+    }
+
+    /// Whether an AX window sits at `bounds`, tolerating the rounding that the
+    /// window server and Accessibility report differently.
+    private static func covers(_ bounds: CGRect, _ axWindow: AXUIElement) -> Bool {
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &positionValue) == .success,
+              AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let position = positionValue, CFGetTypeID(position) == AXValueGetTypeID(),
+              let size = sizeValue, CFGetTypeID(size) == AXValueGetTypeID() else { return false }
+
+        var origin = CGPoint.zero
+        var extent = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &origin),
+              AXValueGetValue(size as! AXValue, .cgSize, &extent) else { return false }
+
+        return abs(origin.x - bounds.origin.x) < 2 && abs(origin.y - bounds.origin.y) < 2
+            && abs(extent.width - bounds.width) < 2 && abs(extent.height - bounds.height) < 2
     }
 
     /// Toggle between the app menu and the Global Menu. Temporary — the next
