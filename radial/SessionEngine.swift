@@ -120,6 +120,7 @@ final class SessionEngine {
 
     private var pollTimer: Timer? = nil
     private var revealStartTime: CFTimeInterval = 0
+    private var lastScrollSwitchTime: CFTimeInterval = 0
     private var revealDuration: CFTimeInterval = 0.35
     private let openRevealDuration: CFTimeInterval = 0.35
     private let switchRevealDuration: CFTimeInterval = 0.2
@@ -273,6 +274,10 @@ final class SessionEngine {
                 guard self.trackpad.isEngaged else { return false }
                 event.type = .mouseMoved
                 return false
+            case .scrollWheel:
+                guard self.trackpad.isEngaged else { return false }
+                self.handleScrollSwitch(event)
+                return true
             default:
                 let button = Int(event.getIntegerValueField(.mouseEventButtonNumber))
                 guard self.trackpad.isEngaged || self.mouse.ownsTriggerButton(button) else {
@@ -292,6 +297,13 @@ final class SessionEngine {
     /// would stop that key from ever being typed.
     private func consumeKeyEvent(type: CGEventType, event: CGEvent) -> Bool {
         guard let nsEvent = NSEvent(cgEvent: event) else { return false }
+
+        // A recorder waiting for a shortcut has to see the key before the
+        // focused app's input method or a sheet's Esc handler swallows it.
+        if let recorder = KeyRecorder.active, recorder.isRecording, NSApp.isActive {
+            if type == .keyDown, !nsEvent.isARepeat { recorder.capture(nsEvent) }
+            return true
+        }
 
         if isMenuSwitchEvent(nsEvent) {
             if type == .keyDown, !nsEvent.isARepeat { toggleMenuScope() }
@@ -768,8 +780,8 @@ final class SessionEngine {
 
     // MARK: - Menu scope
 
-    /// Pick the menu for the app the cursor is hovering, falling back to the
-    /// frontmost app. Called once per open so the menu can't change mid-gesture.
+    /// Pick the menu for the app the cursor is hovering. Called once per open so
+    /// the menu can't change mid-gesture.
     private func resolveMenuScope() {
         switchProgress = 1
         outgoingItems = []
@@ -778,12 +790,12 @@ final class SessionEngine {
         // Hovering a background window should load that app's menu without
         // requiring a click to activate it first. Whatever is under the cursor
         // decides the scope outright: if that app has no menu the user gets the
-        // global one, not whichever app happens to be frontmost. Only an empty
-        // hit test — the desktop, or a window we can't attribute — defers to the
-        // frontmost app.
+        // global one, not whichever app happens to be frontmost. An empty hit
+        // test — the desktop, the Dock, the menu bar — is the global menu too,
+        // so moving off every window resets the scope.
         let hovered = Self.windowUnderCursor()
         let frontmost = NSWorkspace.shared.frontmostApplication
-        let target = hovered?.app ?? frontmost
+        let target = hovered?.app
 
         // Actions reach whichever app holds focus, so the hovered window is
         // raised now — while the user is still choosing — not on selection.
@@ -909,6 +921,22 @@ final class SessionEngine {
 
         return abs(origin.x - bounds.origin.x) < 2 && abs(origin.y - bounds.origin.y) < 2
             && abs(extent.width - bounds.width) < 2 && abs(extent.height - bounds.height) < 2
+    }
+
+    /// Flip menus on a scroll, in either direction.
+    ///
+    /// A single wheel notch and a trackpad swipe both arrive as a stream of
+    /// events, so switches are rate-limited and the momentum tail is ignored.
+    private func handleScrollSwitch(_ event: CGEvent) {
+        guard event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else { return }
+        let lines = event.getDoubleValueField(.scrollWheelEventDeltaAxis1)
+        let points = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
+        guard lines != 0 || abs(points) > 2 else { return }
+
+        let now = CACurrentMediaTime()
+        guard now - lastScrollSwitchTime > 0.3 else { return }
+        lastScrollSwitchTime = now
+        toggleMenuScope()
     }
 
     /// Toggle between the app menu and the Global Menu. Temporary — the next

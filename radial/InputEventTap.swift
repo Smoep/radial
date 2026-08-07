@@ -57,6 +57,7 @@ final class InputEventTap {
             (1 << CGEventType.leftMouseDragged.rawValue)  |
             (1 << CGEventType.rightMouseDragged.rawValue) |
             (1 << CGEventType.otherMouseDragged.rawValue) |
+            (1 << CGEventType.scrollWheel.rawValue)       |
             (1 << CGEventType.keyDown.rawValue)           |
             (1 << CGEventType.keyUp.rawValue)
 

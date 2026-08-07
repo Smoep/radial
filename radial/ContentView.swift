@@ -550,6 +550,10 @@ private struct MenuSwitchKeyRow: View {
                 Text(caption).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Text("Scrolling up or down while the overlay is open switches menus too.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .onChange(of: settings.menuSwitchEnabled) { _, enabled in if !enabled { stopRecording() } }
     }
@@ -557,7 +561,7 @@ private struct MenuSwitchKeyRow: View {
     private var caption: String {
         if isRecording { return "Press any key · click the recorder again to cancel" }
         return "Toggles between an app's menu and the Global Menu while the overlay is open. "
-             + "Radial can't consume the key, so it also reaches the app underneath — pick one that's harmless there."
+             + "The key is swallowed while the menu is up, so it never reaches the app underneath."
     }
 
     private func startRecording() {

@@ -193,28 +193,42 @@ final class KeyRecorder {
     private var monitor: Any?
     var onCapture: ((Int, String, Bool, Bool, Bool, Bool) -> Void)?
 
+    /// The recorder currently waiting for a key, if any.
+    ///
+    /// An input method sits between the keyboard and the app and swallows some
+    /// keys outright — Esc cancels composition in the Chinese IMEs — so the
+    /// event tap feeds the recorder ahead of them when it is running.
+    static weak var active: KeyRecorder?
+
     func start() {
         guard !isRecording else { return }
         isRecording = true
+        Self.active = self
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            let code = Int(event.keyCode)
-            let chars = event.charactersIgnoringModifiers ?? ""
-            let label = Self.labelForKey(code, chars: chars)
-            self.onCapture?(
-                code, label,
-                event.modifierFlags.contains(.command),
-                event.modifierFlags.contains(.shift),
-                event.modifierFlags.contains(.option),
-                event.modifierFlags.contains(.control)
-            )
-            self.stop()
+            self.capture(event)
             return nil
         }
     }
 
+    /// Record `event` as the chosen shortcut.
+    func capture(_ event: NSEvent) {
+        guard isRecording else { return }
+        let code = Int(event.keyCode)
+        let chars = event.charactersIgnoringModifiers ?? ""
+        onCapture?(
+            code, Self.labelForKey(code, chars: chars),
+            event.modifierFlags.contains(.command),
+            event.modifierFlags.contains(.shift),
+            event.modifierFlags.contains(.option),
+            event.modifierFlags.contains(.control)
+        )
+        stop()
+    }
+
     func stop() {
         isRecording = false
+        if Self.active === self { Self.active = nil }
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
     }
 
@@ -603,7 +617,7 @@ private struct FloatingDragPreview: View {
     var body: some View {
         if drag.isDragging, let action = drag.sourceAction {
             HStack(spacing: 8) {
-                ActionIconLabel(name: action.isSubcategory ? "folder.fill" : action.systemImage)
+                ActionIconLabel(name: action.systemImage)
                     .foregroundStyle(action.isSubcategory ? .orange : .secondary)
                 Text(action.singleLineLabel).font(.callout)
             }
@@ -871,7 +885,7 @@ private struct ActionListView: View {
                 .frame(width: 24, height: 24)
                 .frame(width: 28)
         } else {
-            ActionIconLabel(name: action.isSubcategory ? "folder.fill" : action.systemImage)
+            ActionIconLabel(name: action.systemImage)
                 .font(isRoot ? .title3 : .body)
                 .foregroundStyle(color)
                 .frame(width: isRoot ? 24 : 20)
@@ -1682,10 +1696,10 @@ private struct SubcategoryEditorSheet: View {
             }
             HStack {
                 Text("Icon").frame(width: 70, alignment: .leading)
-                TextField("SF Symbol name", text: $icon)
+                TextField("SF Symbol, or paste an emoji", text: $icon)
                     .textFieldStyle(.roundedBorder)
                 Button { showIconPicker = true } label: {
-                    Image(systemName: icon)
+                    ActionIconLabel(name: icon)
                         .font(.title3).frame(width: 30, height: 30)
                         .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
                 }

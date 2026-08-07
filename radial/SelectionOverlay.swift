@@ -313,15 +313,12 @@ private struct OverlayRadialView: View {
                                    baseOpacity: 0.75,
                                    tabMid: item.isSubcategory ? (a1 + a2) / 2 : nil)
 
-                    let isSubcat = item.isSubcategory
-
                     guard actRevealFrac > 0.7 else { continue }
                     let actLabelAlpha = min((actRevealFrac - 0.7) / 0.3, 1.0)
                     let midA = (a1 + a2) / 2
                     let labelR = (rInner + rOuter) / 2
                     let iconPt = pointOnCircle(center, labelR - radialIconInset, midA)
 
-                    let iconName = isSubcat ? "folder.fill" : item.systemImage
                     if let icon = customIcon(for: item) {
                         drawRotatedAppIcon(
                             icon, context: context,
@@ -330,7 +327,7 @@ private struct OverlayRadialView: View {
                         )
                     } else {
                         drawRotatedIcon(
-                            systemName: iconName, context: context,
+                            systemName: item.systemImage, context: context,
                             at: iconPt, angle: midA,
                             fontSize: isSelected ? 20 : 17, opacity: actLabelAlpha
                         )
