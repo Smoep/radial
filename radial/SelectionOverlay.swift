@@ -533,25 +533,14 @@ private struct OverlayRadialView: View {
             return
         }
 
-        // Fit inside the hub: wrap two-word labels, shrink otherwise.
-        let maxWidth = radius * 1.75
-        func fontSize(for text: String) -> CGFloat {
-            let fitted = maxWidth / (CGFloat(text.count) * 0.55)
-            return min(11, max(8, fitted))
-        }
-        let words = label.split(separator: " ").map(String.init)
-        let oneLineSize = fontSize(for: label)
-        if words.count >= 2, CGFloat(label.count) * 0.55 * 11 > maxWidth {
-            let split = (words.count + 1) / 2
-            let l1 = words[0..<split].joined(separator: " ")
-            let l2 = words[split...].joined(separator: " ")
-            let size = min(fontSize(for: l1), fontSize(for: l2))
-            context.draw(hubText(l1, size: size, alpha: alpha),
-                         at: CGPoint(x: center.x, y: center.y - size * 0.62))
-            context.draw(hubText(l2, size: size, alpha: alpha),
-                         at: CGPoint(x: center.x, y: center.y + size * 0.62))
-        } else {
-            context.draw(hubText(label, size: oneLineSize, alpha: alpha), at: center)
+        let maxLines = AppSettings.shared.menuLabelWrappingEnabled ? HubLabelMetrics.maximumLines : 1
+        let layout = HubLabelMetrics.layout(for: RadialAction.singleLine(label),
+                                            radius: radius, maxLines: maxLines)
+        let lineHeight = layout.size * HubLabelMetrics.lineSpacing
+        for (index, line) in layout.lines.enumerated() {
+            let offset = (CGFloat(index) - CGFloat(layout.lines.count - 1) / 2) * lineHeight
+            context.draw(hubText(line, size: layout.size, alpha: alpha),
+                         at: CGPoint(x: center.x, y: center.y + offset))
         }
     }
 
@@ -713,7 +702,7 @@ private struct OverlayRadialView: View {
 
         if AppSettings.shared.menuLabelWrappingEnabled,
            !fitsOneLine,
-           let (line1, line2) = splitLabelForWrapping(text) {
+              let (line1, line2) = LabelMetrics.balancedLineSplit(text) {
             drawTwoCurvedLines(line1, line2, context: context, center: center,
                                radius: radius, midAngle: midAngle,
                                fontSize: fontSize, maxAngle: maxAngle, opacity: opacity)
@@ -748,33 +737,6 @@ private struct OverlayRadialView: View {
         drawCurvedText(flipped ? line1 : line2, context: context, center: center,
                        radius: radius - dr, midAngle: midAngle,
                        fontSize: lineSize, maxAngle: maxAngle, opacity: opacity)
-    }
-
-    private func splitLabelForWrapping(_ text: String) -> (String, String)? {
-        let words = text.split(separator: " ").map(String.init)
-        if words.count >= 2 {
-            var best = (words[0], words[1...].joined(separator: " "))
-            var bestDiff = abs(estimatedTextUnits(Array(best.0)) - estimatedTextUnits(Array(best.1)))
-            for k in 2..<words.count {
-                let line1 = words[0..<k].joined(separator: " ")
-                let line2 = words[k...].joined(separator: " ")
-                let diff = abs(estimatedTextUnits(Array(line1)) - estimatedTextUnits(Array(line2)))
-                if diff < bestDiff { bestDiff = diff; best = (line1, line2) }
-            }
-            return best
-        }
-
-        let chars = Array(text)
-        guard chars.count >= 2 else { return nil }
-        var bestIndex = 1
-        var bestDiff = CGFloat.greatestFiniteMagnitude
-        for index in 1..<chars.count {
-            let left = estimatedTextUnits(Array(chars[..<index]))
-            let right = estimatedTextUnits(Array(chars[index...]))
-            let diff = abs(left - right)
-            if diff < bestDiff { bestDiff = diff; bestIndex = index }
-        }
-        return (String(chars[..<bestIndex]), String(chars[bestIndex...]))
     }
 
     private func drawCurvedText(
@@ -934,6 +896,39 @@ enum LabelMetrics {
         textUnits(chars) * size
     }
 
+    /// Splits text onto `count` lines by repeatedly halving the widest one.
+    /// Stops early when a line can no longer be divided.
+    static func balancedLines(_ text: String, count: Int) -> [String] {
+        var lines = [text]
+        while lines.count < count {
+            guard let widest = lines.indices.max(by: {
+                textUnits(Array(lines[$0])) < textUnits(Array(lines[$1]))
+            }), let (first, second) = balancedLineSplit(lines[widest]) else { break }
+            lines.replaceSubrange(widest...widest, with: [first, second])
+        }
+        return lines
+    }
+
+    static func balancedLineSplit(_ text: String) -> (String, String)? {
+        let chars = Array(text)
+        guard chars.count >= 2 else { return nil }
+
+        var best: (String, String)?
+        var bestDifference = CGFloat.greatestFiniteMagnitude
+        for index in 1..<chars.count {
+            let first = String(chars[..<index]).trimmingCharacters(in: .whitespaces)
+            let second = String(chars[index...]).trimmingCharacters(in: .whitespaces)
+            guard !first.isEmpty, !second.isEmpty else { continue }
+
+            let difference = abs(textUnits(Array(first)) - textUnits(Array(second)))
+            if difference < bestDifference {
+                bestDifference = difference
+                best = (first, second)
+            }
+        }
+        return best
+    }
+
     /// The size the text is actually drawn at: the requested size, shrunk only
     /// as far as the floor allows when it will not fit the available arc.
     static func fittedFontSize(_ chars: [Character], radius: CGFloat,
@@ -967,5 +962,102 @@ enum LabelMetrics {
         default:
             return false
         }
+    }
+}
+
+// MARK: - Hub label layout
+
+/// Text layout for the centre hub, where lines sit inside a circle rather than
+/// a box: the width a line can use shrinks as it moves away from the middle.
+/// Long names therefore wrap onto more lines instead of overflowing the rim.
+enum HubLabelMetrics {
+    static let maximumLines = 3
+    static let maximumSize: CGFloat = 11
+    static let minimumSize: CGFloat = 8
+    /// Line pitch, in multiples of the font size.
+    static let lineSpacing: CGFloat = 1.24
+    /// Share of the hub radius the text may occupy, leaving a visual margin.
+    static let fitFraction: CGFloat = 0.875
+
+    /// The line breakdown and font size that best fit the hub.
+    static func layout(for label: String, radius: CGFloat,
+                       maxLines: Int = maximumLines) -> (lines: [String], size: CGFloat) {
+        let fitRadius = radius * fitFraction
+        var best: (lines: [String], size: CGFloat, overflow: CGFloat)?
+
+        for count in 1...max(1, maxLines) {
+            let lines = LabelMetrics.balancedLines(label, count: count)
+            if count > 1, lines.count < count { break }
+
+            let size = fittedSize(lines, fitRadius: fitRadius)
+            let spill = overflow(lines, size: size, fitRadius: fitRadius)
+            let improves = best.map { spill < $0.overflow || (spill == $0.overflow && size > $0.size) } ?? true
+            if improves { best = (lines, size, spill) }
+            if spill <= 0, size >= maximumSize { break }
+        }
+
+        guard let best else { return ([label], minimumSize) }
+        // Wrapping alone cannot always win: one very long word, or wrapping
+        // turned off, still leaves a line wider than the circle at the floor size.
+        let lines = best.lines.enumerated().map { index, line in
+            truncated(line, size: best.size,
+                      toWidth: availableWidth(lineIndex: index, lineCount: best.lines.count,
+                                              size: best.size, fitRadius: fitRadius))
+        }
+        return (lines, best.size)
+    }
+
+    /// Drops trailing characters until the line plus an ellipsis fits.
+    static func truncated(_ line: String, size: CGFloat, toWidth width: CGFloat) -> String {
+        var chars = Array(line)
+        guard LabelMetrics.textWidth(chars, size: size) > width else { return line }
+
+        let ellipsisWidth = LabelMetrics.textWidth(["\u{2026}"], size: size)
+        while !chars.isEmpty {
+            chars.removeLast()
+            if LabelMetrics.textWidth(chars, size: size) + ellipsisWidth <= width { break }
+        }
+        return chars.isEmpty ? "" : String(chars) + "\u{2026}"
+    }
+
+    /// Largest size at which every line clears the circle. The usable width
+    /// depends on the size itself, so this steps down until it settles.
+    static func fittedSize(_ lines: [String], fitRadius: CGFloat) -> CGFloat {
+        var size = maximumSize
+        for _ in 0..<6 {
+            var limit = maximumSize
+            for (index, line) in lines.enumerated() {
+                let units = LabelMetrics.textUnits(Array(line))
+                guard units > 0 else { continue }
+                let width = availableWidth(lineIndex: index, lineCount: lines.count,
+                                           size: size, fitRadius: fitRadius)
+                limit = min(limit, width / units)
+            }
+            let next = max(minimumSize, min(size, limit))
+            if next >= size - 0.01 { return next }
+            size = next
+        }
+        return size
+    }
+
+    /// How far the widest line sticks out past the circle, or 0 when it fits.
+    static func overflow(_ lines: [String], size: CGFloat, fitRadius: CGFloat) -> CGFloat {
+        var worst: CGFloat = 0
+        for (index, line) in lines.enumerated() {
+            let width = LabelMetrics.textWidth(Array(line), size: size)
+            let available = availableWidth(lineIndex: index, lineCount: lines.count,
+                                           size: size, fitRadius: fitRadius)
+            worst = max(worst, width - available)
+        }
+        return worst
+    }
+
+    /// Chord width available to a line at its vertical offset from the centre.
+    static func availableWidth(lineIndex: Int, lineCount: Int,
+                               size: CGFloat, fitRadius: CGFloat) -> CGFloat {
+        let offset = (CGFloat(lineIndex) - CGFloat(lineCount - 1) / 2) * size * lineSpacing
+        let edge = abs(offset) + size / 2
+        guard edge < fitRadius else { return 0 }
+        return 2 * sqrt(fitRadius * fitRadius - edge * edge)
     }
 }

@@ -32,6 +32,10 @@ private let positionOffset = 32 // byte offset to normalized (x, y) pair
 /// physical click (finger pressed on pad) rather than a tap-to-click tap (~0).
 private let clickFingerPresenceThreshold: Float = 0.3
 private let candidateMoveCancelThreshold: CGFloat = 80
+/// A trackpad tap arrives twice while engaged: first as the multitouch lift,
+/// then as the click macOS synthesises from it ~0.2s later. Selections landing
+/// inside this window after a lift are that echo, not a second tap.
+private let liftSelectEchoWindow: TimeInterval = 0.35
 
 private let mtLib: UnsafeMutableRawPointer? = {
     dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_LAZY)
@@ -147,6 +151,8 @@ final class TrackpadService {
     private var prevFingerCount: Int32 = 0
     /// Set true on engage(); cleared on first finger-lift. Prevents initial lift from triggering a click.
     private var justEngaged: Bool = false
+    /// When the multitouch lift last confirmed a selection.
+    private var lastLiftSelect: TimeInterval = -.greatestFiniteMagnitude
     /// DIAG: latest and peak per-finger contact size/density from the MT frame.
     private var lastFingerSize: Float = 0
     private var lastFingerDensity: Float = 0
@@ -280,17 +286,6 @@ final class TrackpadService {
                 return
             }
 
-            // Check activation zone — reject touches near left/right trackpad edges.
-            if let pos = touchPosition {
-                let margin = CGFloat((settings?.activationMargin ?? 0) / 100.0)
-                if margin > 0 {
-                    if pos.x < margin || pos.x > (1 - margin) {
-                        tzLog.info("candidate blocked — activation zone x=\(Double(pos.x), privacy: .public) margin=\(Double(margin), privacy: .public)")
-                        return  // touch outside activation zone
-                    }
-                }
-            }
-
             // Respect trackpad-trigger toggle.
             if settings?.trackpadEnabled == false {
                 tzLog.info("candidate blocked — trackpad trigger disabled")
@@ -334,6 +329,7 @@ final class TrackpadService {
                 if liftMode {
                     // Lift-to-select: ANY lift while engaged confirms selection.
                     pendingClick = true
+                    lastLiftSelect = ProcessInfo.processInfo.systemUptime
                 } else if justEngaged {
                     // Click-to-select: first lift after activation — NOT a click.
                     justEngaged = false
@@ -345,6 +341,7 @@ final class TrackpadService {
                     let dist = sqrt(dx * dx + dy * dy)
                     if dist < 20 {
                         pendingClick = true
+                        lastLiftSelect = ProcessInfo.processInfo.systemUptime
                     }
                 }
                 // Don't disengage.
@@ -489,6 +486,7 @@ final class TrackpadService {
         isEngaged = false
         pendingClick = false
         justEngaged = false
+        lastLiftSelect = -.greatestFiniteMagnitude
         touchPhase = .ended
         phaseQueue.append(.ended)
     }
@@ -502,6 +500,11 @@ final class TrackpadService {
     /// Called by SessionEngine when the hotkey is released — confirms the current selection.
     func triggerExternalRelease() {
         guard isEngaged else { return }
+        let sinceLift = ProcessInfo.processInfo.systemUptime - lastLiftSelect
+        if sinceLift < liftSelectEchoWindow {
+            tzLog.info("external release ignored — echo of trackpad lift \(sinceLift, privacy: .public)s ago")
+            return
+        }
         pendingClick = true
     }
 }

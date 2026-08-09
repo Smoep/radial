@@ -119,6 +119,7 @@ struct ContentView: View {
 
     @ViewBuilder private var triggersTab: some View {
         trackpadGroup
+        selectionGroup
         mouseGroup
         keyboardGroup
         menuSwitchGroup
@@ -152,14 +153,20 @@ struct ContentView: View {
                                    set: { engine.settings.activationHoldDuration = $0 }),
                     range: 0.00...1.50, step: 0.05, format: "%.2fs",
                     caption: "How long the finger must rest before the menu opens (0 = instant)")
-
-                SettingsToggle("Lift to Select",
-                    isOn: Binding(get: { engine.settings.liftToSelect },
-                                  set: { engine.settings.liftToSelect = $0 }),
-                    caption: engine.settings.liftToSelect
-                        ? "Lift finger to confirm selection"
-                        : "Click again to confirm selection")
             }
+        }
+    }
+
+    /// Lifting a finger confirms whatever is highlighted no matter how the menu
+    /// was opened, so this stays outside the Trackpad Trigger toggle.
+    @ViewBuilder private var selectionGroup: some View {
+        SettingsSection(title: "Selection") {
+            SettingsToggle("Lift to Select",
+                isOn: Binding(get: { engine.settings.liftToSelect },
+                              set: { engine.settings.liftToSelect = $0 }),
+                caption: engine.settings.liftToSelect
+                    ? "Lift your finger off the trackpad to confirm, however the menu was opened"
+                    : "Tap or click again to confirm the selection")
         }
     }
 
@@ -199,11 +206,20 @@ struct ContentView: View {
                 SettingsToggle("Release to Select",
                     isOn: Binding(get: { engine.settings.mouseReleaseToSelect },
                                   set: { engine.settings.mouseReleaseToSelect = $0 }),
-                    caption: engine.settings.mouseReleaseToSelect
-                        ? "Release the button to confirm selection"
-                        : "Click again to confirm selection")
+                    caption: mouseSelectCaption)
             }
         }
+    }
+
+    /// Click-to-select is wired to the left button whatever opens the menu, so
+    /// with a middle trigger the trigger button dismisses instead of confirming.
+    private var mouseSelectCaption: String {
+        if engine.settings.mouseReleaseToSelect {
+            return "Release the button to confirm selection"
+        }
+        return engine.settings.mouseButton == .left
+            ? "Click again to confirm selection"
+            : "Left-click to confirm, or press the middle button again to dismiss"
     }
 
     @ViewBuilder private var keyboardGroup: some View {

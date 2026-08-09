@@ -97,7 +97,6 @@ final class AppSettings {
         d.set(ringDelay, forKey: "ringDelay")
         d.set(liftToSelect, forKey: "liftToSelect")
         d.set(isTestMode, forKey: "isTestMode")
-        d.set(activationMargin, forKey: "activationMargin")
         d.set(ringHeight, forKey: "ringHeight")
         d.set(selectionWidth, forKey: "selectionWidth")
         d.set(menuLabelFontSize, forKey: "menuLabelFontSize")
@@ -199,11 +198,6 @@ final class AppSettings {
 
     /// When true, system actions are suppressed; safe for testing.
     var isTestMode: Bool = false {
-        didSet { scheduleSave() }
-    }
-
-    /// Activation zone: 0–40 percent margin from trackpad edges (0 = full trackpad, 30 = center 40%).
-    var activationMargin: Double = 0 {
         didSet { scheduleSave() }
     }
 
@@ -344,7 +338,6 @@ final class AppSettings {
         if let v = d.object(forKey: "ringDelay")          as? Double { ringDelay          = v }
         if let v = d.object(forKey: "liftToSelect")      as? Bool   { liftToSelect      = v }
         if let v = d.object(forKey: "isTestMode")        as? Bool   { isTestMode        = v }
-        if let v = d.object(forKey: "activationMargin")  as? Double { activationMargin  = v }
         if let v = d.object(forKey: "ringHeight")        as? Double { ringHeight        = v }
         if let v = d.object(forKey: "selectionWidth")    as? Double { selectionWidth    = v }
         if let v = d.object(forKey: "menuLabelFontSize") as? Double { menuLabelFontSize = min(max(v, 8), 18) }
@@ -382,7 +375,7 @@ final class AppSettings {
 
         let keys = [
             "activationHoldDuration", "gridDivisions", "dragRange", "ringDelay",
-            "liftToSelect", "isTestMode", "activationMargin", "ringHeight",
+            "liftToSelect", "isTestMode", "ringHeight",
             "selectionWidth", "menuLabelFontSize", "menuLabelWrappingEnabled",
             "categoryFlexibilityPercent", "pauseWhileTyping",
             "activationTrigger", "overlayOpacity", "hotkeyEnabled", "hotkeyKeyCode",

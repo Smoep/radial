@@ -14,7 +14,6 @@ struct SettingsData: Codable {
     var ringDelay: Double?
     var liftToSelect: Bool?
     var isTestMode: Bool?
-    var activationMargin: Double?
     var ringHeight: Double?
     var selectionWidth: Double?
     var menuLabelFontSize: Double?
@@ -103,7 +102,6 @@ extension AppSettings {
             ringDelay: ringDelay,
             liftToSelect: liftToSelect,
             isTestMode: isTestMode,
-            activationMargin: activationMargin,
             ringHeight: ringHeight,
             selectionWidth: selectionWidth,
             menuLabelFontSize: menuLabelFontSize,
@@ -138,7 +136,6 @@ extension AppSettings {
         if let v = d.ringDelay { ringDelay = v }
         if let v = d.liftToSelect { liftToSelect = v }
         if let v = d.isTestMode { isTestMode = v }
-        if let v = d.activationMargin { activationMargin = v }
         if let v = d.ringHeight { ringHeight = v }
         if let v = d.selectionWidth { selectionWidth = v }
         if let v = d.menuLabelFontSize { menuLabelFontSize = min(max(v, 8), 18) }

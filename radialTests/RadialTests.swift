@@ -153,6 +153,14 @@ struct ChineseLabelTests {
         #expect(broken == ["打开系统", "偏好设置"])
     }
 
+    @Test func automaticWrapBalancesLongLatinWords() {
+        let split = LabelMetrics.balancedLineSplit("NewAction NewActionNewAction")
+        let firstUnits = LabelMetrics.textUnits(Array(split?.0 ?? ""))
+        let secondUnits = LabelMetrics.textUnits(Array(split?.1 ?? ""))
+
+        #expect(split != nil)
+        #expect(abs(firstUnits - secondUnits) <= 0.55)
+    }
     /// Only the first break makes a line; the rest become spaces so no text is
     /// silently dropped.
     @Test func extraBreaksFoldIntoTheSecondLine() {
@@ -171,6 +179,65 @@ struct ChineseLabelTests {
                                   actionConfig: .init())
         #expect(action.singleLineLabel == "打开系统 偏好设置")
         #expect(!action.singleLineLabel.contains("\n"))
+    }
+}
+
+// MARK: - Hub label layout
+
+/// Covers the reported problem: a long action name shown in the centre hub ran
+/// past the circle's edge. The old fitter measured the hub as a box, split by
+/// word count, and clamped the font size up to a floor, so an over-long word
+/// was simply drawn wider than the hub.
+struct HubLabelTests {
+
+    /// Hub radius at the default 38pt dead zone.
+    let hubRadius: CGFloat = 38
+    var fitRadius: CGFloat { hubRadius * HubLabelMetrics.fitFraction }
+
+    /// The regression itself: nothing may extend past the circle.
+    @Test func longLabelStaysInsideTheHub() {
+        let layout = HubLabelMetrics.layout(for: "NewAction NewActionNewAction", radius: hubRadius)
+        for (index, line) in layout.lines.enumerated() {
+            let width = LabelMetrics.textWidth(Array(line), size: layout.size)
+            let available = HubLabelMetrics.availableWidth(lineIndex: index,
+                                                           lineCount: layout.lines.count,
+                                                           size: layout.size,
+                                                           fitRadius: fitRadius)
+            #expect(width <= available, "\(line) needs \(width)pt but only \(available)pt fits")
+        }
+    }
+
+    @Test func longLabelWrapsOntoSeveralLines() {
+        let layout = HubLabelMetrics.layout(for: "NewAction NewActionNewAction", radius: hubRadius)
+        #expect(layout.lines.count > 1)
+    }
+
+    /// A name with no spaces has to wrap too — that is why splitting by words
+    /// was not enough.
+    @Test func singleWordLabelsWrapWithoutLosingText() {
+        let layout = HubLabelMetrics.layout(for: "NewActionNewActionNewAction", radius: hubRadius)
+        #expect(layout.lines.count > 1)
+        #expect(layout.lines.joined() == "NewActionNewActionNewAction")
+    }
+
+    @Test func shortLabelsStayOnOneLineAtFullSize() {
+        let layout = HubLabelMetrics.layout(for: "Copy", radius: hubRadius)
+        #expect(layout.lines == ["Copy"])
+        #expect(layout.size == HubLabelMetrics.maximumSize)
+    }
+
+    /// With Wrap Labels off the hub gets a single line, so an over-long name has
+    /// to ellipsize rather than run past the rim.
+    @Test func unwrappedLabelsTruncateInsteadOfOverflowing() {
+        let layout = HubLabelMetrics.layout(for: "NewAction NewActionNewAction",
+                                            radius: hubRadius, maxLines: 1)
+        #expect(layout.lines.count == 1)
+        #expect(layout.lines[0].hasSuffix("…"))
+
+        let width = LabelMetrics.textWidth(Array(layout.lines[0]), size: layout.size)
+        let available = HubLabelMetrics.availableWidth(lineIndex: 0, lineCount: 1,
+                                                       size: layout.size, fitRadius: fitRadius)
+        #expect(width <= available)
     }
 }
 
