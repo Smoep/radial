@@ -178,7 +178,13 @@ final class TrackpadService {
         // ── Start MultitouchSupport (no permission needed) ──
         startMultitouch()
 
-        // ── Global event monitors for mouse events (no Accessibility needed) ──
+        installGlobalEventMonitor()
+        tzLog.info("Started — MT devices: \(self.mtDevices.count), global monitors: \(self.eventMonitors.isEmpty ? "missing" : "ok")")
+    }
+
+    /// Install the read-only AppKit monitor separately so it can be replaced
+    /// without registering another private-framework contact callback.
+    private func installGlobalEventMonitor() {
         let mask: NSEvent.EventTypeMask = [
             .leftMouseDown, .leftMouseDragged, .leftMouseUp,
             .rightMouseDown, .rightMouseUp,
@@ -189,7 +195,56 @@ final class TrackpadService {
         }) {
             eventMonitors.append(m)
         }
-        tzLog.info("Started — MT devices: \(self.mtDevices.count), global monitors: ok")
+    }
+
+    /// Refresh Space-sensitive AppKit state after Mission Control changes the
+    /// active Space topology.
+    ///
+    /// MultitouchSupport is hardware-global, not Space-scoped. In particular,
+    /// stopping and restarting an already registered device can leave the
+    /// private framework reporting frames to WindowServer while silently
+    /// dropping our registered callback. Keep that registration alive for the
+    /// lifetime of the service and only rebuild the AppKit monitor/window state.
+    func refreshForSpaceChange() {
+        holdTimerID &+= 1
+        fingerDown = false
+        prevFingerCount = 0
+        isTouching = false
+        isEngaged = false
+        pendingClick = false
+        justEngaged = false
+        touchPhase = .idle
+        phaseQueue.removeAll()
+
+        for m in eventMonitors { NSEvent.removeMonitor(m) }
+        eventMonitors.removeAll()
+        installGlobalEventMonitor()
+
+        _sharedTrackpadService = self
+        if mtDevices.isEmpty { startMultitouch() }
+        tzLog.info("Refreshed after active Space change — MT devices: \(self.mtDevices.count), global monitors: \(self.eventMonitors.isEmpty ? "missing" : "ok")")
+    }
+
+    /// Repair listener state that can be checked without synthesising input.
+    @discardableResult
+    func repairListenersIfNeeded() -> Bool {
+        var repaired = false
+        if _sharedTrackpadService !== self {
+            _sharedTrackpadService = self
+            repaired = true
+        }
+        if eventMonitors.isEmpty {
+            installGlobalEventMonitor()
+            repaired = true
+        }
+        if mtDevices.isEmpty {
+            startMultitouch()
+            repaired = !mtDevices.isEmpty || repaired
+        }
+        if repaired {
+            tzLog.info("Heartbeat repaired trackpad listeners — MT devices: \(self.mtDevices.count), global monitors: \(self.eventMonitors.isEmpty ? "missing" : "ok")")
+        }
+        return repaired
     }
 
     private func startMultitouch() {

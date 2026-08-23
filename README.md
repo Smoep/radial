@@ -10,7 +10,7 @@ Radial is a macOS launcher that lives in your trackpad. Touch and hold anywhere,
 
 Unzip and drag **Radial.app** to your Applications folder.
 
-> **First launch:** macOS will show a security warning because the app is not signed with an Apple Developer certificate.
+> **First launch:** macOS may show a security warning because this download is not notarized for public distribution.
 > Right-click (or Control-click) the app → **Open** → **Open**. You only need to do this once.
 
 ![Radial Menu Concept](Radial%20Menu%20Concept%20Dma.jpg)
@@ -61,13 +61,17 @@ The center is always a cancel zone. If you change your mind, slide back to the m
 
 ## Build from source
 
+Maintainers and coding agents should follow [DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md)
+for signed local deployment, rollback, and UI-level verification. A successful
+build alone is not considered a deployed test version.
+
 ```bash
 git clone https://github.com/Smoep/radial.git
 cd radial
 xcodebuild -project radial.xcodeproj -scheme radial -configuration Release \
   -derivedDataPath build-release build
 cp -R build-release/Build/Products/Release/Radial.app /Applications/Radial.app
-open /Applications/Radial.app
+open -a /Applications/Radial.app
 ```
 
 ---

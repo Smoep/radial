@@ -51,6 +51,10 @@ final class MouseTriggerService {
 
     func start() {
         guard eventMonitors.isEmpty else { return }
+        installEventMonitor()
+    }
+
+    private func installEventMonitor() {
         let mask: NSEvent.EventTypeMask = [
             .leftMouseDown, .leftMouseUp, .leftMouseDragged,
             .otherMouseDown, .otherMouseUp, .otherMouseDragged,
@@ -62,6 +66,27 @@ final class MouseTriggerService {
             eventMonitors.append(m)
         }
         mouseLog.info("MouseTriggerService started")
+    }
+
+    /// Recreate the monitor token and candidate window after a Space switch.
+    /// `NSEvent` exposes no API for validating a global-monitor token, so a
+    /// deterministic rebuild is the only reliable recovery after topology
+    /// changes in Mission Control.
+    func refreshForSpaceChange() {
+        for m in eventMonitors { NSEvent.removeMonitor(m) }
+        eventMonitors.removeAll()
+        resetCandidate()
+        installEventMonitor()
+        mouseLog.info("MouseTriggerService refreshed after active Space change")
+    }
+
+    /// Heartbeat repair for the health state AppKit does expose.
+    @discardableResult
+    func repairListenersIfNeeded() -> Bool {
+        guard eventMonitors.isEmpty else { return false }
+        installEventMonitor()
+        mouseLog.info("MouseTriggerService heartbeat rebuilt missing monitor")
+        return true
     }
 
     func stop() {

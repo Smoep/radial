@@ -26,6 +26,12 @@ final class SelectionOverlay {
 
     private var window: NSPanel?
     private var hostView: NSHostingView<OverlayRadialView>?
+    /// Panels whose WindowServer backing became stale after a Space topology
+    /// change. Keep them alive until the transition has fully settled; releasing
+    /// an AppKit/SwiftUI panel from inside the Space notification can race queued
+    /// display work and crash in objc_release.
+    private var retiredWindows: [NSPanel] = []
+    private var retiredWindowCleanup: DispatchWorkItem?
 
     /// Screen-space center of the overlay (after show).
     var center: CGPoint = .zero
@@ -161,6 +167,29 @@ final class SelectionOverlay {
         hostView?.layer?.transform = CATransform3DIdentity
         window?.orderOut(nil)
         CATransaction.flush()
+    }
+
+    /// Retire the cached panel after a Space change. The next `show` creates a
+    /// fresh panel on the current Space, while the old backing store is released
+    /// only after WindowServer has finished the transition.
+    func retireForSpaceChange() {
+        hideImmediately()
+        if let window {
+            window.orderOut(nil)
+            retiredWindows.append(window)
+        }
+        window = nil
+        hostView = nil
+        center = .zero
+
+        retiredWindowCleanup?.cancel()
+        let cleanup = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            for panel in self.retiredWindows { panel.close() }
+            self.retiredWindows.removeAll()
+        }
+        retiredWindowCleanup = cleanup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: cleanup)
     }
 
     private func playAppear() {

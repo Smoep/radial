@@ -2,6 +2,9 @@
 
 Short, practical notes. Only confirmed, tested things.
 
+For the mandatory signed build/install/launch/visual-verification workflow, see
+[DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md).
+
 ---
 
 ## Tuning Values That Worked
@@ -50,6 +53,35 @@ Copies entire array every tick. Fix: mutate in-place.
 **Codesigning after deploying to `/Applications/`**
 Invalidates accessibility permissions — macOS sees it as a new app identity. Never re-codesign a deployed binary.
 
+**Using an ad-hoc build when the installed app is team-signed**
+Changes Radial's code identity and can invalidate Accessibility trust. Inspect the
+installed signature and Keychain identities first, then build Release with the
+matching team and Apple Development certificate.
+
+**Treating a successful build or a momentary PID as a completed deployment**
+Neither proves the installed bundle is the new binary, the app stayed alive, the
+menu-bar item exists, or the overlay rendered. Deployment includes hash/signature
+verification, UI inspection, delayed liveness checking, and crash-report checking.
+
+**Assuming a Space-related symptom means global listeners are corrupt**
+In the confirmed Spaces failure, input and engagement continued normally. The
+cached WindowServer panel was onscreen but its SwiftUI content was transparent.
+Trace configuration → raw input → engagement → window → pixels before changing code.
+
+**Power-cycling MultitouchSupport devices on Space changes**
+`MTDeviceStop`/`MTDeviceStart` can silently kill Radial's registered callback even
+while WindowServer still receives frames. Multitouch registration is global and
+must remain alive for the service lifetime.
+
+**Closing a SwiftUI/AppKit overlay inside the Space-change notification**
+Raced queued display work and caused `EXC_BAD_ACCESS` in `objc_release`. Retire the
+old panel, create a fresh one on the next show, and release the old panel only
+after WindowServer settles.
+
+**Changing trigger settings to make a test pass**
+Can obscure the original behavior and alter the user's setup. Read the enabled
+trackpad/mouse/hotkey configuration first and test the modes the user actually uses.
+
 **Changing the bundle ID after release**
 Breaks previously granted accessibility permissions. Treat `com.jos.radial` as stable once shipped.
 
@@ -92,16 +124,9 @@ echo "exit=$?"
 grep -E "error:|BUILD SUCCEEDED|BUILD FAILED" /tmp/radial_build.log | tail
 ```
 
-**Deploy + verify (both hashes must match, PID confirms new process):**
-```bash
-pkill -9 Radial 2>/dev/null
-rm -rf /Applications/Radial.app
-cp -R build-release/Build/Products/Release/Radial.app /Applications/Radial.app
-open -a /Applications/Radial.app
-shasum -a 256 build-release/Build/Products/Release/Radial.app/Contents/MacOS/Radial \
-               /Applications/Radial.app/Contents/MacOS/Radial
-pgrep -fl Radial
-```
+**Deploy + verify:** Follow [DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md). Preserve
+the installed app as a recoverable backup; verify matching signature and hashes;
+then verify the menu-bar UI, visible overlay, delayed liveness, and crash reports.
 
 **Run the test suite:**
 ```bash

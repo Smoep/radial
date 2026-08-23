@@ -23,6 +23,10 @@ Everything we learned building Radial — what worked, what didn't, and why.
 14. [Reusable Components](#14-reusable-components)
 15. [Quick Reference: Key Codes & Constants](#15-quick-reference)
 
+The operational definition of done for local fixes is documented in
+[DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md). Follow it for signing, recoverable
+installation, launch, visual verification, Spaces regression testing, and rollback.
+
 ---
 
 ## 1. What Radial Is
