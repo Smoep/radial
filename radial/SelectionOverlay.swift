@@ -18,6 +18,16 @@ private let radialLabelArcFraction: CGFloat = 0.78
 /// How far a subcategory tab protrudes past the ring. Must stay under the
 /// gap to the next ring (`SessionEngine.ringGap`) so rings never collide.
 private let subcategoryTabHeight: CGFloat = 4.5
+/// The selected marker is repainted above its child ring, so it can be shorter
+/// and still read clearly without reaching across the next row of slices.
+private let selectedSubcategoryTabHeight: CGFloat = 4.5
+/// Subtle visual enlargement for the highlighted slice. These values only
+/// affect drawing; selection geometry remains unchanged.
+private let selectedSliceOuterExpansion: CGFloat = 3
+private let selectedSliceInnerExpansion: CGFloat = 1.5
+private let selectedSliceEdgeExpansion: CGFloat = 3
+private let selectedSliceRadialLift: CGFloat = 1
+private let selectedSliceContentScale: CGFloat = 1.08
 
 /// Floating overlay window that shows a radial pie menu at the cursor
 /// when the trackpad is engaged. Individual glass elements, macOS 26 style.
@@ -323,52 +333,94 @@ private struct OverlayRadialView: View {
 
                 let selectedIdx = engine.selectionPath.indices.contains(depth) ? engine.selectionPath[depth] : nil
 
-                for j in 0..<itemCount {
-                    let item = items[j]
-                    let color = colorFromHex(item.colorHex ?? inheritedHex)
-                    let a1 = arcStart + sliceAngle * CGFloat(j) + ringGapAngle / 2
-                    let a2 = arcStart + sliceAngle * CGFloat(j + 1) - ringGapAngle / 2
-                    let isSelected = selectedIdx == j
+                // Paint the selected slice in a second pass so its small overlap
+                // and shadow sit above both neighbours like a lifted pie wedge.
+                for selectedPass in 0...1 {
+                    for j in 0..<itemCount {
+                        let isSelected = selectedIdx == j
+                        guard isSelected == (selectedPass == 1) else { continue }
+                        let item = items[j]
+                        let color = colorFromHex(item.colorHex ?? inheritedHex)
+                        let a1 = arcStart + sliceAngle * CGFloat(j) + ringGapAngle / 2
+                        let a2 = arcStart + sliceAngle * CGFloat(j + 1) - ringGapAngle / 2
 
-                    let sliceCCWStart = sliceAngle * CGFloat(itemCount - 1 - j)
-                    if sliceCCWStart >= ringRevealAngle { continue }
-                    let actRevealFrac = min((ringRevealAngle - sliceCCWStart) / sliceAngle, 1.0)
-                    let clippedA1 = a2 - actRevealFrac * (a2 - a1)
+                        let sliceCCWStart = sliceAngle * CGFloat(itemCount - 1 - j)
+                        if sliceCCWStart >= ringRevealAngle { continue }
+                        let actRevealFrac = min((ringRevealAngle - sliceCCWStart) / sliceAngle, 1.0)
+                        let clippedA1 = a2 - actRevealFrac * (a2 - a1)
+                        let midA = (a1 + a2) / 2
+                        let sliceCenter = isSelected
+                            ? pointOnCircle(center, selectedSliceRadialLift, midA)
+                            : center
 
-                    drawGlassSlice(context: context, center: center,
-                                   innerR: rInner + 2, outerR: rOuter,
-                                   a1: clippedA1, a2: a2,
-                                   color: color, isSelected: isSelected,
-                                   baseOpacity: 0.75,
-                                   tabMid: item.isSubcategory ? (a1 + a2) / 2 : nil)
+                        drawGlassSlice(context: context, center: sliceCenter,
+                                       innerR: rInner + 2, outerR: rOuter,
+                                       a1: clippedA1, a2: a2,
+                                       color: color, isSelected: isSelected,
+                                       baseOpacity: 0.75,
+                                       tabMid: item.isSubcategory ? midA : nil)
 
-                    guard actRevealFrac > 0.7 else { continue }
-                    let actLabelAlpha = min((actRevealFrac - 0.7) / 0.3, 1.0)
-                    let midA = (a1 + a2) / 2
-                    let labelR = (rInner + rOuter) / 2
-                    let iconPt = pointOnCircle(center, labelR - radialIconInset, midA)
+                        guard actRevealFrac > 0.7 else { continue }
+                        let actLabelAlpha = min((actRevealFrac - 0.7) / 0.3, 1.0)
+                        let labelR = (rInner + rOuter) / 2
+                        let iconPt = pointOnCircle(sliceCenter, labelR - radialIconInset, midA)
 
-                    if let icon = customIcon(for: item) {
-                        drawRotatedAppIcon(
-                            icon, context: context,
-                            at: iconPt, angle: midA,
-                            size: isSelected ? 32 : 28, opacity: actLabelAlpha
-                        )
-                    } else {
-                        drawRotatedIcon(
-                            systemName: item.systemImage, context: context,
-                            at: iconPt, angle: midA,
-                            fontSize: isSelected ? 20 : 17, opacity: actLabelAlpha
+                        if let icon = customIcon(for: item) {
+                            drawRotatedAppIcon(
+                                icon, context: context,
+                                at: iconPt, angle: midA,
+                                size: isSelected ? 32 : 28, opacity: actLabelAlpha
+                            )
+                        } else {
+                            drawRotatedIcon(
+                                systemName: item.systemImage, context: context,
+                                at: iconPt, angle: midA,
+                                fontSize: isSelected ? 20 : 17, opacity: actLabelAlpha
+                            )
+                        }
+
+                        drawCurvedLabel(
+                            item.label, context: context, center: sliceCenter,
+                            radius: labelR + radialLabelOutset, midAngle: midA,
+                            fontSize: CGFloat(AppSettings.shared.menuLabelFontSize)
+                                * (isSelected ? selectedSliceContentScale : 1),
+                            maxAngle: (a2 - a1) * radialLabelArcFraction
+                                * (isSelected ? selectedSliceContentScale : 1),
+                            opacity: (isSelected ? 1.0 : 0.8) * actLabelAlpha
                         )
                     }
+                }
 
-                    drawCurvedLabel(
-                        item.label, context: context, center: center,
-                        radius: labelR + radialLabelOutset, midAngle: midA,
-                        fontSize: CGFloat(AppSettings.shared.menuLabelFontSize),
-                        maxAngle: (a2 - a1) * radialLabelArcFraction,
-                        opacity: (isSelected ? 1.0 : 0.8) * actLabelAlpha
-                    )
+                // The child ring is painted after its parent and can cover the
+                // parent's small category marker. Put just that marker back on
+                // top so it remains attached to the lifted parent slice.
+                let parentDepth = depth - 1
+                let parentItems = engine.itemsAtDepth(parentDepth)
+                if engine.selectionPath.indices.contains(parentDepth) {
+                    let parentIndex = engine.selectionPath[parentDepth]
+                    if parentItems.indices.contains(parentIndex),
+                       parentItems[parentIndex].isSubcategory {
+                        let parentItem = parentItems[parentIndex]
+                        let parentOuterR = CGFloat(engine.ringOuterRadius(depth: parentDepth))
+                            - (parentDepth == 0 ? 2 : 0)
+                        let parentCount = parentItems.count
+                        let parentSliceAngle = parentDepth == 0
+                            ? (2 * CGFloat.pi) / CGFloat(parentCount)
+                            : CGFloat(engine.spreadAngle(
+                                forItemCount: parentCount, atDepth: parentDepth
+                            )) / CGFloat(parentCount)
+                        let parentInheritedHex = parentDepth == 0
+                            ? radialDefaultColorHex
+                            : engine.inheritedColorHex(atDepth: parentDepth)
+                        drawSelectedCategoryTabOverlay(
+                            context: context,
+                            center: pointOnCircle(center, selectedSliceRadialLift, parentMidAngle),
+                            outerR: parentOuterR + selectedSliceOuterExpansion,
+                            angle: parentMidAngle,
+                            sliceAngle: parentSliceAngle,
+                            color: colorFromHex(parentItem.colorHex ?? parentInheritedHex)
+                        )
+                    }
                 }
             }
         }
@@ -400,51 +452,61 @@ private struct OverlayRadialView: View {
         let gapAngle = gap / ((innerR + outerR) / 2)
         let revealAngle = reveal * 2 * CGFloat.pi
 
-        for i in 0..<count {
-            let item = items[i]
-            let a1 = startOffset + catAngle * CGFloat(i) + gapAngle / 2
-            let a2 = startOffset + catAngle * CGFloat(i + 1) - gapAngle / 2
-            let isSelected = selectedIdx == i
+        // Paint the selected slice last so its overlap remains visible on both
+        // edges regardless of its index in the menu.
+        for selectedPass in 0...1 {
+            for i in 0..<count {
+                let item = items[i]
+                let a1 = startOffset + catAngle * CGFloat(i) + gapAngle / 2
+                let a2 = startOffset + catAngle * CGFloat(i + 1) - gapAngle / 2
+                let isSelected = selectedIdx == i
+                guard isSelected == (selectedPass == 1) else { continue }
 
-            let sliceCCWStart = catAngle * CGFloat(count - 1 - i)
-            if sliceCCWStart >= revealAngle { continue }
-            let sliceRevealFrac = min((revealAngle - sliceCCWStart) / catAngle, 1.0)
-            let clippedA1 = a2 - sliceRevealFrac * (a2 - a1)
-            let color = colorFromHex(item.colorHex ?? radialDefaultColorHex)
+                let sliceCCWStart = catAngle * CGFloat(count - 1 - i)
+                if sliceCCWStart >= revealAngle { continue }
+                let sliceRevealFrac = min((revealAngle - sliceCCWStart) / catAngle, 1.0)
+                let clippedA1 = a2 - sliceRevealFrac * (a2 - a1)
+                let color = colorFromHex(item.colorHex ?? radialDefaultColorHex)
+                let midA = (a1 + a2) / 2
+                let sliceCenter = isSelected
+                    ? pointOnCircle(center, selectedSliceRadialLift, midA)
+                    : center
 
-            drawGlassSlice(context: context, center: center,
-                           innerR: innerR + 2, outerR: outerR - 2,
-                           a1: clippedA1, a2: a2,
-                           color: color, isSelected: isSelected,
-                           baseOpacity: 0.55,
-                           tabMid: item.isSubcategory ? (a1 + a2) / 2 : nil)
+                drawGlassSlice(context: context, center: sliceCenter,
+                               innerR: innerR + 2, outerR: outerR - 2,
+                               a1: clippedA1, a2: a2,
+                               color: color, isSelected: isSelected,
+                               baseOpacity: 0.55,
+                               tabMid: item.isSubcategory ? midA : nil)
 
-            guard sliceRevealFrac > 0.7 else { continue }
-            let labelAlpha = min((sliceRevealFrac - 0.7) / 0.3, 1.0)
-            let midA = (a1 + a2) / 2
-            let labelR = (innerR + outerR) / 2
-            let iconPt = pointOnCircle(center, labelR - radialIconInset, midA)
+                guard sliceRevealFrac > 0.7 else { continue }
+                let labelAlpha = min((sliceRevealFrac - 0.7) / 0.3, 1.0)
+                let labelR = (innerR + outerR) / 2
+                let iconPt = pointOnCircle(sliceCenter, labelR - radialIconInset, midA)
 
-            if let icon = customIcon(for: item) {
-                drawRotatedAppIcon(
-                    icon, context: context,
-                    at: iconPt, angle: midA,
-                    size: isSelected ? 32 : 28, opacity: labelAlpha
-                )
-            } else {
-                drawRotatedIcon(
-                    systemName: item.systemImage, context: context,
-                    at: iconPt, angle: midA,
-                    fontSize: isSelected ? 20 : 17, opacity: labelAlpha
+                if let icon = customIcon(for: item) {
+                    drawRotatedAppIcon(
+                        icon, context: context,
+                        at: iconPt, angle: midA,
+                        size: isSelected ? 32 : 28, opacity: labelAlpha
+                    )
+                } else {
+                    drawRotatedIcon(
+                        systemName: item.systemImage, context: context,
+                        at: iconPt, angle: midA,
+                        fontSize: isSelected ? 20 : 17, opacity: labelAlpha
+                    )
+                }
+                drawCurvedLabel(
+                    item.label, context: context, center: sliceCenter,
+                    radius: labelR + radialLabelOutset, midAngle: midA,
+                    fontSize: CGFloat(AppSettings.shared.menuLabelFontSize)
+                        * (isSelected ? selectedSliceContentScale : 1),
+                    maxAngle: (a2 - a1) * radialLabelArcFraction
+                        * (isSelected ? selectedSliceContentScale : 1),
+                    opacity: 0.9 * labelAlpha
                 )
             }
-            drawCurvedLabel(
-                item.label, context: context, center: center,
-                radius: labelR + radialLabelOutset, midAngle: midA,
-                fontSize: CGFloat(AppSettings.shared.menuLabelFontSize),
-                maxAngle: (a2 - a1) * radialLabelArcFraction,
-                opacity: 0.9 * labelAlpha
-            )
         }
     }
 
@@ -460,53 +522,60 @@ private struct OverlayRadialView: View {
         baseOpacity: Double,
         tabMid: CGFloat? = nil
     ) {
-        // Selected slice pops outward slightly.
-        let outR = isSelected ? outerR + 4 : outerR
-        let mid = (a1 + a2) / 2
+        // The selected slice grows into a small portion of the existing gaps.
+        // Hit-testing continues to use the unexpanded ring and angle bounds.
+        let midRadius = max((innerR + outerR) / 2, 1)
+        let angularExpansion = isSelected ? selectedSliceEdgeExpansion / midRadius : 0
+        let startA = a1 - angularExpansion
+        let endA = a2 + angularExpansion
+        let inR = isSelected ? max(0, innerR - selectedSliceInnerExpansion) : innerR
+        let outR = isSelected ? outerR + selectedSliceOuterExpansion : outerR
+        let mid = (startA + endA) / 2
         // Overall overlay opacity: 1.0 = solid, lower = see-through.
         let op = AppSettings.shared.overlayOpacity
 
         var path = Path()
-        path.move(to: pointOnCircle(center, innerR, a1))
-        if let tabAngle = tabMid, !isSelected,
-           let halfSpan = subcategoryTabHalfSpan(outerR: outR, sliceAngle: a2 - a1) {
+        path.move(to: pointOnCircle(center, inR, startA))
+        if let tabAngle = tabMid,
+           let halfSpan = subcategoryTabHalfSpan(outerR: outR, sliceAngle: endA - startA) {
             let dA = halfSpan / outR
             // Skip while the slice is still sweeping in and the rim is clipped.
-            if tabAngle - dA > a1, tabAngle + dA < a2 {
+            if tabAngle - dA > startA, tabAngle + dA < endA {
                 let tipR = outR + subcategoryTabHeight
                 path.addArc(center: center, radius: outR,
-                            startAngle: .radians(a1), endAngle: .radians(tabAngle - dA),
+                            startAngle: .radians(startA), endAngle: .radians(tabAngle - dA),
                             clockwise: false)
                 path.addLine(to: pointOnCircle(center, tipR - 1.5, tabAngle - dA * 0.3))
                 path.addQuadCurve(to: pointOnCircle(center, tipR - 1.5, tabAngle + dA * 0.3),
                                   control: pointOnCircle(center, tipR + 1.2, tabAngle))
                 path.addLine(to: pointOnCircle(center, outR, tabAngle + dA))
                 path.addArc(center: center, radius: outR,
-                            startAngle: .radians(tabAngle + dA), endAngle: .radians(a2),
+                            startAngle: .radians(tabAngle + dA), endAngle: .radians(endA),
                             clockwise: false)
             } else {
                 path.addArc(center: center, radius: outR,
-                            startAngle: .radians(a1), endAngle: .radians(a2), clockwise: false)
+                            startAngle: .radians(startA), endAngle: .radians(endA), clockwise: false)
             }
         } else {
             path.addArc(center: center, radius: outR,
-                        startAngle: .radians(a1), endAngle: .radians(a2), clockwise: false)
+                        startAngle: .radians(startA), endAngle: .radians(endA), clockwise: false)
         }
-        path.addLine(to: pointOnCircle(center, innerR, a2))
-        path.addArc(center: center, radius: innerR,
-                     startAngle: .radians(a2), endAngle: .radians(a1), clockwise: true)
+        path.addLine(to: pointOnCircle(center, inR, endA))
+        path.addArc(center: center, radius: inR,
+                     startAngle: .radians(endA), endAngle: .radians(startA), clockwise: true)
         path.closeSubpath()
 
         _ = baseOpacity
         // Solid dark backing whose alpha is driven by the opacity setting:
         // at 100% it fully hides the screen behind the slice.
         var shadowCtx = context
-        shadowCtx.addFilter(.shadow(color: .black.opacity((isSelected ? 0.45 : 0.30) * op),
-                                    radius: isSelected ? 7 : 4, x: 0, y: 2))
+        shadowCtx.addFilter(.shadow(color: .black.opacity((isSelected ? 0.52 : 0.30) * op),
+                                    radius: isSelected ? 9 : 4,
+                                    x: 0, y: isSelected ? 4 : 2))
         shadowCtx.fill(path, with: .color(Color(white: 0.13).opacity(op)))
 
         // Radial glass gradient: darker at the inner edge, tinted brighter outward.
-        let gInner = pointOnCircle(center, innerR, mid)
+        let gInner = pointOnCircle(center, inR, mid)
         let gOuter = pointOnCircle(center, outR, mid)
         context.fill(
             path,
@@ -527,13 +596,60 @@ private struct OverlayRadialView: View {
                 startPoint: gOuter, endPoint: gInner
             )
         )
-        context.stroke(path, with: .color(.white.opacity((isSelected ? 0.60 : 0.22) * op)),
-                       lineWidth: isSelected ? 1.0 : 0.5)
+        let edgeColor = isSelected
+            ? color.opacity(0.5 * op)
+            : Color.white.opacity(0.22 * op)
+        context.stroke(path, with: .color(edgeColor), lineWidth: isSelected ? 0.8 : 0.5)
         if isSelected {
             var glowCtx = context
             glowCtx.addFilter(.blur(radius: 7))
             glowCtx.stroke(path, with: .color(color.opacity(0.55 * op)), lineWidth: 3)
         }
+    }
+
+    /// Repaints the protruding portion of a selected category marker after its
+    /// child ring, preserving the visual connection to the lifted parent slice.
+    private func drawSelectedCategoryTabOverlay(
+        context: GraphicsContext,
+        center: CGPoint,
+        outerR: CGFloat,
+        angle: CGFloat,
+        sliceAngle: CGFloat,
+        color: Color
+    ) {
+        guard let halfSpan = subcategoryTabHalfSpan(
+            outerR: outerR, sliceAngle: sliceAngle + selectedSliceEdgeExpansion * 2 / outerR
+        ) else { return }
+
+        let dA = halfSpan / outerR
+        let baseR = outerR - 2
+        let tipR = outerR + selectedSubcategoryTabHeight
+        let op = AppSettings.shared.overlayOpacity
+        var path = Path()
+        path.move(to: pointOnCircle(center, baseR, angle - dA))
+        path.addLine(to: pointOnCircle(center, tipR - 1.5, angle - dA * 0.3))
+        path.addQuadCurve(
+            to: pointOnCircle(center, tipR - 1.5, angle + dA * 0.3),
+            control: pointOnCircle(center, tipR + 1.2, angle)
+        )
+        path.addLine(to: pointOnCircle(center, baseR, angle + dA))
+        path.closeSubpath()
+
+        var shadowCtx = context
+        shadowCtx.addFilter(.shadow(
+            color: .black.opacity(0.52 * op), radius: 9, x: 0, y: 4
+        ))
+        shadowCtx.fill(path, with: .color(Color(white: 0.13).opacity(op)))
+        context.fill(path, with: .color(color.opacity(0.62 * op)))
+        context.fill(
+            path,
+            with: .linearGradient(
+                Gradient(colors: [.white.opacity(0.14 * op), .white.opacity(0)]),
+                startPoint: pointOnCircle(center, tipR, angle),
+                endPoint: pointOnCircle(center, baseR, angle)
+            )
+        )
+        context.stroke(path, with: .color(color.opacity(0.5 * op)), lineWidth: 0.8)
     }
 
     /// Hub content: highlighted item's name (wrapped to two lines if needed),
