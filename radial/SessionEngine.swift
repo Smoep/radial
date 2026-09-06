@@ -128,6 +128,8 @@ final class SessionEngine {
     private var pollTimer: Timer? = nil
     private var revealStartTime: CFTimeInterval = 0
     private var lastScrollSwitchTime: CFTimeInterval = 0
+    private var accumulatedScrollDelta: Double = 0
+    private var switchedDuringScrollGesture = false
     private var revealDuration: CFTimeInterval = 0.35
     private let openRevealDuration: CFTimeInterval = 0.35
     private let switchRevealDuration: CFTimeInterval = 0.2
@@ -142,6 +144,10 @@ final class SessionEngine {
     /// Global key-event monitor for pause-while-typing AND hotkey trigger.
     private var keyMonitor: Any?
     private var hotkeyMonitor: Any?
+    /// Fallback for scroll switching when the consuming Accessibility tap is
+    /// unavailable. Events consumed by an active tap never reach this monitor,
+    /// so the two paths cannot switch the menu twice.
+    private var scrollMonitor: Any?
     /// Timestamp of last hotkey key-down (used for double-tap detection).
     private var lastHotkeyPressTime: CFTimeInterval = 0
     /// Timestamp of last detected keystroke.
@@ -417,6 +423,11 @@ final class SessionEngine {
             }
         }
 
+        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+            guard let self, self.trackpad.isEngaged, let cgEvent = event.cgEvent else { return }
+            self.handleScrollSwitch(cgEvent)
+        }
+
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -434,6 +445,7 @@ final class SessionEngine {
         consumedNumberKeyCodes.removeAll()
         if let m = keyMonitor    { NSEvent.removeMonitor(m); keyMonitor    = nil }
         if let m = hotkeyMonitor { NSEvent.removeMonitor(m); hotkeyMonitor = nil }
+        if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
         isRunning = false
         phase = .idle
         isTouching = false
@@ -1104,17 +1116,58 @@ final class SessionEngine {
     /// Flip menus on a scroll, in either direction.
     ///
     /// A single wheel notch and a trackpad swipe both arrive as a stream of
-    /// events, so switches are rate-limited and the momentum tail is ignored.
+    /// events, so small precise deltas are accumulated and each physical
+    /// trackpad gesture switches at most once. Momentum tails are ignored.
     private func handleScrollSwitch(_ event: CGEvent) {
         guard event.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0 else { return }
+
+        let scrollPhase = event.getIntegerValueField(.scrollWheelEventScrollPhase)
+        let beganPhase = Int64(NSEvent.Phase.began.rawValue)
+        if scrollPhase & beganPhase != 0 {
+            accumulatedScrollDelta = 0
+            switchedDuringScrollGesture = false
+        }
         let lines = event.getDoubleValueField(.scrollWheelEventDeltaAxis1)
         let points = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
-        guard lines != 0 || abs(points) > 2 else { return }
+        let delta = points != 0 ? points : lines * 3
+        if delta != 0 {
+            accumulatedScrollDelta = Self.accumulatedScrollDelta(
+                current: accumulatedScrollDelta,
+                incoming: delta
+            )
 
-        let now = CACurrentMediaTime()
-        guard now - lastScrollSwitchTime > 0.3 else { return }
-        lastScrollSwitchTime = now
-        toggleMenuScope()
+            if abs(accumulatedScrollDelta) >= 3 {
+                let now = CACurrentMediaTime()
+                if now - lastScrollSwitchTime > 0.3 {
+                    let isTrackpadGesture = scrollPhase != 0
+                    if !isTrackpadGesture || !switchedDuringScrollGesture {
+                        switchedDuringScrollGesture = isTrackpadGesture
+                        lastScrollSwitchTime = now
+                        accumulatedScrollDelta = 0
+                        toggleMenuScope()
+                    }
+                }
+            }
+        }
+
+        if Self.isTerminalScrollPhase(scrollPhase) {
+            accumulatedScrollDelta = 0
+            switchedDuringScrollGesture = false
+        }
+    }
+
+    static func accumulatedScrollDelta(current: Double, incoming: Double) -> Double {
+        guard current != 0, incoming != 0, current.sign != incoming.sign else {
+            return current + incoming
+        }
+        return incoming
+    }
+
+    static func isTerminalScrollPhase(_ phase: Int64) -> Bool {
+        let terminalPhases = Int64(
+            NSEvent.Phase.ended.rawValue | NSEvent.Phase.cancelled.rawValue
+        )
+        return phase & terminalPhases != 0
     }
 
     /// Toggle between the app menu and the Global Menu. Temporary — the next

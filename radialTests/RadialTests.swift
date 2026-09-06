@@ -48,6 +48,27 @@ struct RadialTests {
         #expect(InputEventTap.eventMask & scrollWheelBit != 0)
     }
 
+    @Test func preciseTrackpadScrollDeltasAccumulateAcrossEvents() {
+        var accumulated = 0.0
+        for _ in 0..<5 {
+            accumulated = SessionEngine.accumulatedScrollDelta(
+                current: accumulated, incoming: 0.6
+            )
+        }
+        #expect(abs(accumulated - 3) < 0.0001)
+
+        let reversed = SessionEngine.accumulatedScrollDelta(
+            current: accumulated, incoming: -0.4
+        )
+        #expect(reversed == -0.4)
+    }
+
+    @Test func changedScrollPhaseIsNotMistakenForGestureEnd() {
+        #expect(!SessionEngine.isTerminalScrollPhase(Int64(NSEvent.Phase.changed.rawValue)))
+        #expect(SessionEngine.isTerminalScrollPhase(Int64(NSEvent.Phase.ended.rawValue)))
+        #expect(SessionEngine.isTerminalScrollPhase(Int64(NSEvent.Phase.cancelled.rawValue)))
+    }
+
     @Test func numberKeysMapClockwiseAcrossKeyboardAndKeypad() {
         #expect(SessionEngine.numberedSliceIndex(forKeyCode: 18) == 0)
         #expect(SessionEngine.numberedSliceIndex(forKeyCode: 25) == 8)
