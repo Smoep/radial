@@ -43,6 +43,11 @@ struct RadialTests {
         #expect(FileManager.default.fileExists(atPath: unrelatedFile.path))
     }
 
+    @Test func inputTapSubscribesToScrollWheelEvents() {
+        let scrollWheelBit: CGEventMask = 1 << CGEventType.scrollWheel.rawValue
+        #expect(InputEventTap.eventMask & scrollWheelBit != 0)
+    }
+
     @Test func numberKeysMapClockwiseAcrossKeyboardAndKeypad() {
         #expect(SessionEngine.numberedSliceIndex(forKeyCode: 18) == 0)
         #expect(SessionEngine.numberedSliceIndex(forKeyCode: 25) == 8)
@@ -51,6 +56,24 @@ struct RadialTests {
         #expect(SessionEngine.numberedSliceIndex(forKeyCode: 92) == 8)
         #expect(SessionEngine.numberedSliceIndex(forKeyCode: 82) == 9)
         #expect(SessionEngine.numberedSliceIndex(forKeyCode: 53) == nil)
+    }
+
+    @Test func numberNavigationContinuesInPointerOpenedRing() {
+        #expect(SessionEngine.numberedSelectionDepth(
+            selectionPathCount: 1,
+            nextRingAvailable: true,
+            continuingKeyboardNavigation: false
+        ) == 1)
+        #expect(SessionEngine.numberedSelectionDepth(
+            selectionPathCount: 2,
+            nextRingAvailable: true,
+            continuingKeyboardNavigation: false
+        ) == 2)
+        #expect(SessionEngine.numberedSelectionDepth(
+            selectionPathCount: 1,
+            nextRingAvailable: false,
+            continuingKeyboardNavigation: false
+        ) == 0)
     }
 
     @Test func specialKeyLabels() {

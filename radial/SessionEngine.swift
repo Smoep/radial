@@ -884,6 +884,17 @@ final class SessionEngine {
         }
     }
 
+    /// Continue in the deepest visible ring when the pointer has already opened
+    /// one, or when an earlier number key opened it. Otherwise begin at ring 1.
+    static func numberedSelectionDepth(selectionPathCount: Int,
+                                       nextRingAvailable: Bool,
+                                       continuingKeyboardNavigation: Bool) -> Int {
+        if continuingKeyboardNavigation || (selectionPathCount > 0 && nextRingAvailable) {
+            return selectionPathCount
+        }
+        return 0
+    }
+
     private func isNumberSelectionEvent(_ event: NSEvent) -> Bool {
         guard settings.numberedSlicesEnabled,
               phase == .active,
@@ -895,9 +906,14 @@ final class SessionEngine {
     /// Choose one slice in the current ring. A category opens its next ring;
     /// choosing a leaf performs it immediately.
     private func selectNumberedSlice(at index: Int) {
-        let depth = numberedSelectionCursor == nil ? 0 : selectionPath.count
+        let nextRingItems = itemsAtDepth(selectionPath.count)
+        let depth = Self.numberedSelectionDepth(
+            selectionPathCount: selectionPath.count,
+            nextRingAvailable: !nextRingItems.isEmpty,
+            continuingKeyboardNavigation: numberedSelectionCursor != nil
+        )
         if depth == 0 { selectionPath = [] }
-        let items = itemsAtDepth(depth)
+        let items = depth == 0 ? activeItems : nextRingItems
         guard items.indices.contains(index) else { return }
 
         if selectionPath.count > depth {
