@@ -4,7 +4,7 @@ import CoreGraphics
 import Darwin
 import os
 
-private var tzLog: Logger { RadialLog.trackpad }
+private var tzLog: RadialLogger { RadialLog.trackpad }
 
 /// Console trace for the gesture path, silent unless diagnostics are enabled.
 private func tzPrint(_ message: @autoclosure () -> String) {
@@ -372,7 +372,7 @@ final class TrackpadService {
             } else {
                 tzPrint("MT: finger down (0→1), waiting for \(trigger.rawValue)")
             }
-            tzLog.info("MT down 0→1: trigger=\(trigger.rawValue, privacy: .public)")
+            tzLog.info("MT down 0→1: trigger=\(trigger.rawValue)")
         }
         // N → 0: all fingers lifted.
         else if fingerCount == 0 && fingerDown {
@@ -380,7 +380,7 @@ final class TrackpadService {
             fingerDown = false
             if isEngaged {
                 let liftMode = settings?.liftToSelect ?? true
-                tzLog.info("MT up →0 while engaged: liftMode=\(liftMode, privacy: .public) justEngaged=\(self.justEngaged, privacy: .public) → \(liftMode ? "pendingClick(finalize)" : "clickToSelect", privacy: .public)")
+                tzLog.info("MT up →0 while engaged: liftMode=\(liftMode) justEngaged=\(self.justEngaged) → \(liftMode ? "pendingClick(finalize)" : "clickToSelect")")
                 if liftMode {
                     // Lift-to-select: ANY lift while engaged confirms selection.
                     pendingClick = true
@@ -436,14 +436,14 @@ final class TrackpadService {
         case .leftMouseDown:
             if isEngaged { return }
             let trigger = settings?.activationTrigger ?? .tapToClick
-            tzLog.info("leftMouseDown recv: trigger=\(trigger.rawValue, privacy: .public) size=\(self.lastFingerSize, privacy: .public)/peak\(self.peakFingerSize, privacy: .public)")
+            tzLog.info("leftMouseDown recv: trigger=\(trigger.rawValue) size=\(self.lastFingerSize)/peak\(self.peakFingerSize)")
             if trigger == .click {
                 guard prevFingerCount == 1 else {
-                    tzLog.info("leftMouseDown ignored — requires one finger, got \(self.prevFingerCount, privacy: .public)")
+                    tzLog.info("leftMouseDown ignored — requires one finger, got \(self.prevFingerCount)")
                     return
                 }
                 if lastFingerSize < clickFingerPresenceThreshold {
-                    tzLog.info("leftMouseDown ignored — tap, no finger contact (size=\(self.lastFingerSize, privacy: .public))")
+                    tzLog.info("leftMouseDown ignored — tap, no finger contact (size=\(self.lastFingerSize))")
                     return
                 }
                 if shouldSuppressActivation?() != true, !isMouseOverOwnWindow(),
@@ -460,7 +460,7 @@ final class TrackpadService {
                     let ringDel = settings?.ringDelay ?? 0.25
                     candidateOverlay.show(at: nsLoc, duration: holdDur, delay: ringDel)
                     startHoldTimer()
-                    tzLog.info("leftMouseDown → click hold started (\(holdDur, privacy: .public)s)")
+                    tzLog.info("leftMouseDown → click hold started (\(holdDur)s)")
                 }
                 return
             }
@@ -507,7 +507,7 @@ final class TrackpadService {
     }
 
     private func cancelCandidate(reason: String) {
-        tzLog.info("candidate cancelled — \(reason, privacy: .public)")
+        tzLog.info("candidate cancelled — \(reason)")
         holdTimerID &+= 1
         fingerDown = false
         candidateOverlay.hide()
@@ -557,7 +557,7 @@ final class TrackpadService {
         guard isEngaged else { return }
         let sinceLift = ProcessInfo.processInfo.systemUptime - lastLiftSelect
         if sinceLift < liftSelectEchoWindow {
-            tzLog.info("external release ignored — echo of trackpad lift \(sinceLift, privacy: .public)s ago")
+            tzLog.info("external release ignored — echo of trackpad lift \(sinceLift)s ago")
             return
         }
         pendingClick = true

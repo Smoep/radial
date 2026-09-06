@@ -3,7 +3,7 @@ import ApplicationServices
 import CoreGraphics
 import os
 
-private var tapLog: Logger { RadialLog.mouse }
+private var tapLog: RadialLogger { RadialLog.mouse }
 
 /// C trampoline — an event tap callback cannot capture context, so the owning
 /// `InputEventTap` is carried across in `refcon`.

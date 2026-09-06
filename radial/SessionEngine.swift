@@ -5,7 +5,7 @@ import Observation
 import CoreGraphics
 import OSLog
 
-private var sessionLog: Logger { RadialLog.session }
+private var sessionLog: RadialLogger { RadialLog.session }
 
 /// Central coordinator: receives trackpad events, drives the radial pie menu,
 /// computes the selected category/action, and fires mapped actions on release.
@@ -146,6 +146,13 @@ final class SessionEngine {
     private var lastHotkeyPressTime: CFTimeInterval = 0
     /// Timestamp of last detected keystroke.
     private var lastKeystrokeTime: CFTimeInterval = 0
+    /// While navigating with number keys, keep the chosen path stable until the
+    /// pointer actually moves. Otherwise the cursor resting in the hub would
+    /// clear the keyboard selection on the next 60 Hz tick.
+    @ObservationIgnored private var numberedSelectionCursor: CGPoint?
+    /// Key-ups must be swallowed even when the matching key-down selected a
+    /// leaf and dismissed the overlay immediately.
+    @ObservationIgnored private var consumedNumberKeyCodes: Set<Int> = []
     /// Cooldown after last keystroke before tracking resumes (seconds).
     private let typingCooldown: CFTimeInterval = 0.2
     /// Whether we're currently suppressed due to typing.
@@ -298,8 +305,8 @@ final class SessionEngine {
 
     /// Swallow the keys Radial owns, and act on them in the monitors' place.
     ///
-    /// Only the menu-switch key while the overlay is open, and a modifier-based
-    /// combo hotkey, are claimed. Double-tap hotkeys are deliberately left alone:
+    /// Numbered slice keys and the menu-switch key while the overlay is open,
+    /// plus a modifier-based combo hotkey, are claimed. Double-tap hotkeys are deliberately left alone:
     /// a bare key can't be identified as the first tap of a pair, so consuming it
     /// would stop that key from ever being typed.
     private func consumeKeyEvent(type: CGEventType, event: CGEvent) -> Bool {
@@ -309,6 +316,19 @@ final class SessionEngine {
         // focused app's input method or a sheet's Esc handler swallows it.
         if let recorder = KeyRecorder.active, recorder.isRecording, NSApp.isActive {
             if type == .keyDown, !nsEvent.isARepeat { recorder.capture(nsEvent) }
+            return true
+        }
+
+        let keyCode = Int(nsEvent.keyCode)
+        if type == .keyUp, consumedNumberKeyCodes.remove(keyCode) != nil {
+            return true
+        }
+        if type == .keyDown, isNumberSelectionEvent(nsEvent) {
+            consumedNumberKeyCodes.insert(keyCode)
+            if !nsEvent.isARepeat,
+               let index = Self.numberedSliceIndex(forKeyCode: keyCode) {
+                selectNumberedSlice(at: index)
+            }
             return true
         }
 
@@ -340,6 +360,16 @@ final class SessionEngine {
         // One monitor handles both so the hotkey is never treated as a "typing" keystroke.
         keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self else { return }
+            // Fallback when Accessibility permission prevented the consuming
+            // event tap from starting. The key also reaches the focused app in
+            // that case, but Radial navigation remains functional.
+            if self.isNumberSelectionEvent(event) {
+                if !event.isARepeat,
+                   let index = Self.numberedSliceIndex(forKeyCode: Int(event.keyCode)) {
+                    self.selectNumberedSlice(at: index)
+                }
+                return
+            }
             // Skip if this key matches the configured hotkey (handled by hotkeyMonitor).
             if self.isHotkeyEvent(event) { return }
             // Menu-switch key: only meaningful while the overlay is open and an
@@ -401,6 +431,7 @@ final class SessionEngine {
         inputTap.stop()
         stopSpaceRecovery()
         stateMachine.reset()
+        consumedNumberKeyCodes.removeAll()
         if let m = keyMonitor    { NSEvent.removeMonitor(m); keyMonitor    = nil }
         if let m = hotkeyMonitor { NSEvent.removeMonitor(m); hotkeyMonitor = nil }
         isRunning = false
@@ -506,6 +537,7 @@ final class SessionEngine {
             if newPhase == .active {
                 selectionPath = []
                 lockedDepth = 0
+                numberedSelectionCursor = nil
                 fingerAngle = 0
                 fingerRadius = 0
                 revealProgress = 0
@@ -595,6 +627,11 @@ final class SessionEngine {
     private func updateRadialSelectionFromCursor() {
         let cursorLoc = NSEvent.mouseLocation
         let dx = cursorLoc.x - overlayCenter.x
+        if let keyboardCursor = numberedSelectionCursor {
+            let movement = hypot(cursorLoc.x - keyboardCursor.x, cursorLoc.y - keyboardCursor.y)
+            if movement < 3 { return }
+            numberedSelectionCursor = nil
+        }
         let dy = cursorLoc.y - overlayCenter.y
         let pixelDist = sqrt(dx * dx + dy * dy)
         if abs(pixelDist - fingerRadius) > 0.5 { fingerRadius = pixelDist }
@@ -758,7 +795,7 @@ final class SessionEngine {
 
     /// Called when user clicks while overlay is showing.
     private func handleOverlayClick() {
-        sessionLog.info("overlayClick: radius=\(self.fingerRadius, privacy: .public) path=\(self.selectionPath.map(String.init).joined(separator: ","), privacy: .public) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil", privacy: .public)")
+        sessionLog.info("overlayClick: radius=\(self.fingerRadius) path=\(self.selectionPath.map(String.init).joined(separator: ",")) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")")
         // Centre: switches menus when an app menu is available, otherwise closes.
         if fingerRadius < Self.deadZoneRadius {
             if canSwitchMenus {
@@ -790,10 +827,10 @@ final class SessionEngine {
 
         // If it's a subcategory, don't execute — user needs to go deeper.
         if action.isSubcategory {
-            sessionLog.info("overlayClick: subcategory '\(action.label, privacy: .public)' — opening deeper ring")
+            sessionLog.info("overlayClick: subcategory '\(action.label)' — opening deeper ring")
             return
         }
-        sessionLog.info("overlayClick: executing '\(action.label, privacy: .public)' type=\(action.actionType.rawValue, privacy: .public)")
+        sessionLog.info("overlayClick: executing '\(action.label)' type=\(action.actionType.rawValue)")
 
         finalizedZoneID = pathLabels.joined(separator: " → ")
         lastFiredActionDescription = action.label
@@ -829,6 +866,53 @@ final class SessionEngine {
         return true
     }
 
+    /// Maps the number row and numeric keypad to clockwise slice indices.
+    /// Zero is the conventional shortcut for item 10.
+    static func numberedSliceIndex(forKeyCode keyCode: Int) -> Int? {
+        switch keyCode {
+        case 18, 83: return 0  // 1
+        case 19, 84: return 1  // 2
+        case 20, 85: return 2  // 3
+        case 21, 86: return 3  // 4
+        case 23, 87: return 4  // 5
+        case 22, 88: return 5  // 6
+        case 26, 89: return 6  // 7
+        case 28, 91: return 7  // 8
+        case 25, 92: return 8  // 9
+        case 29, 82: return 9  // 0 → 10
+        default: return nil
+        }
+    }
+
+    private func isNumberSelectionEvent(_ event: NSEvent) -> Bool {
+        guard settings.numberedSlicesEnabled,
+              phase == .active,
+              Self.numberedSliceIndex(forKeyCode: Int(event.keyCode)) != nil else { return false }
+        let commandModifiers = event.modifierFlags.intersection([.command, .option, .shift, .control])
+        return commandModifiers.isEmpty
+    }
+
+    /// Choose one slice in the current ring. A category opens its next ring;
+    /// choosing a leaf performs it immediately.
+    private func selectNumberedSlice(at index: Int) {
+        let depth = numberedSelectionCursor == nil ? 0 : selectionPath.count
+        if depth == 0 { selectionPath = [] }
+        let items = itemsAtDepth(depth)
+        guard items.indices.contains(index) else { return }
+
+        if selectionPath.count > depth {
+            selectionPath = Array(selectionPath.prefix(depth))
+        }
+        selectionPath.append(index)
+        lockedDepth = selectionPath.count
+        numberedSelectionCursor = NSEvent.mouseLocation
+        updateLegacyZoneID()
+
+        let action = items[index]
+        sessionLog.info("number selection: depth=\(depth) item=\(index + 1) label='\(action.label)'")
+        if !action.isSubcategory { finalizeRadialSelection() }
+    }
+
     /// Double-tap trigger: fire on second press within the configured window.
     private func handleDoubleTap() {
         let now = CACurrentMediaTime()
@@ -852,6 +936,7 @@ final class SessionEngine {
         selectionPath = []
         lockedDepth = 0
         fingerRadius = 0
+        numberedSelectionCursor = nil
         fingerAngle = 0
     }
 
@@ -899,7 +984,7 @@ final class SessionEngine {
             showingAppMenu = false
         }
 
-        sessionLog.info("resolveMenuScope: hover=\(hovered?.app.bundleIdentifier ?? "nil", privacy: .public) front=\(frontmost?.bundleIdentifier ?? "nil", privacy: .public) using=\(self.appMenuRef?.bundleID ?? "global", privacy: .public) raise=\(raise, privacy: .public)")
+        sessionLog.info("resolveMenuScope: hover=\(hovered?.app.bundleIdentifier ?? "nil") front=\(frontmost?.bundleIdentifier ?? "nil") using=\(self.appMenuRef?.bundleID ?? "global") raise=\(raise)")
     }
 
     /// A window under the cursor, with bounds in flipped display coordinates.
@@ -1027,6 +1112,7 @@ final class SessionEngine {
         // Collapse back to the first ring.
         selectionPath = []
         lockedDepth = 0
+        numberedSelectionCursor = nil
         ringRevealProgress = []
         ringRevealStartTimes = []
         lastRevealedAtDepth = []

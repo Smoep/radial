@@ -10,41 +10,11 @@ struct RadialApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        // Menu bar icon + dropdown — no Dock icon (LSUIElement = YES in build settings).
-        // No Window/Settings scene: settings window is managed entirely by AppDelegate.
-        MenuBarExtra {
-            MenuBarMenuView()
-        } label: {
-            Image(systemName: "hand.draw.fill")
-                .imageScale(.medium)
+        // The visible settings window is managed by AppDelegate. Keeping this
+        // empty scene satisfies SwiftUI without creating a normal app window.
+        Settings {
+            EmptyView()
         }
-    }
-}
-
-// MARK: - Menu Bar Dropdown
-
-private struct MenuBarMenuView: View {
-    @State private var isTracking = true
-
-    var body: some View {
-        Button(isTracking ? "Pause Tracking" : "Resume Tracking") {
-            isTracking.toggle()
-            NotificationCenter.default.post(name: .trackZoneToggleTracking, object: nil)
-        }
-
-        Divider()
-
-        Button("Settings…") {
-            AppDelegate.shared?.showSettings()
-        }
-        .keyboardShortcut(",", modifiers: .command)
-
-        Divider()
-
-        Button("Quit Radial") {
-            NSApplication.shared.terminate(nil)
-        }
-        .keyboardShortcut("q", modifiers: .command)
     }
 }
 
@@ -55,11 +25,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Lazily created settings window — recreated if closed and deallocated.
     private var settingsWindow: NSWindow?
+    private var statusItem: NSStatusItem?
+    private var trackingMenuItem: NSMenuItem?
+    private var isTracking = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
+        configureStatusItem()
         // Start trackpad monitoring immediately — no need to open settings first.
         SessionEngine.shared.start()
+    }
+
+    private func configureStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = item.button, let image = NSImage(named: "MenuBarIcon") {
+            // The artwork occupies about 85% of its SVG canvas. A 21 pt image
+            // produces an approximately 18 pt painted glyph in the menu bar.
+            image.size = NSSize(width: 21, height: 21)
+            image.isTemplate = true
+            button.image = image
+            button.imageScaling = .scaleNone
+            button.imagePosition = .imageOnly
+            button.toolTip = "Radial"
+        }
+
+        let menu = NSMenu()
+        let trackingItem = NSMenuItem(
+            title: "Pause Tracking", action: #selector(toggleTracking), keyEquivalent: ""
+        )
+        trackingItem.target = self
+        menu.addItem(trackingItem)
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(
+            title: "Settings…", action: #selector(openSettings), keyEquivalent: ","
+        )
+        settingsItem.keyEquivalentModifierMask = [.command]
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(
+            title: "Quit Radial", action: #selector(quitApp), keyEquivalent: "q"
+        )
+        quitItem.keyEquivalentModifierMask = [.command]
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        item.menu = menu
+        statusItem = item
+        trackingMenuItem = trackingItem
+    }
+
+    @objc private func toggleTracking() {
+        isTracking.toggle()
+        trackingMenuItem?.title = isTracking ? "Pause Tracking" : "Resume Tracking"
+        NotificationCenter.default.post(name: .trackZoneToggleTracking, object: nil)
+    }
+
+    @objc private func openSettings() {
+        showSettings()
+    }
+
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -88,4 +117,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 }
-

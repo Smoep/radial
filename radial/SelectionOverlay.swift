@@ -388,6 +388,16 @@ private struct OverlayRadialView: View {
                                 * (isSelected ? selectedSliceContentScale : 1),
                             opacity: (isSelected ? 1.0 : 0.8) * actLabelAlpha
                         )
+                        if AppSettings.shared.numberedSlicesEnabled, actRevealFrac > 0.9 {
+                            drawSliceNumberFold(
+                                j + 1, context: context, center: sliceCenter,
+                                innerR: rInner + 2, outerR: rOuter,
+                                startAngle: a1, endAngle: a2,
+                                edgeColor: color,
+                                isSelected: isSelected,
+                                opacity: min((actRevealFrac - 0.9) / 0.1, 1)
+                            )
+                        }
                     }
                 }
 
@@ -506,6 +516,16 @@ private struct OverlayRadialView: View {
                         * (isSelected ? selectedSliceContentScale : 1),
                     opacity: 0.9 * labelAlpha
                 )
+                if AppSettings.shared.numberedSlicesEnabled, sliceRevealFrac > 0.9 {
+                    drawSliceNumberFold(
+                        i + 1, context: context, center: sliceCenter,
+                        innerR: innerR + 2, outerR: outerR - 2,
+                        startAngle: a1, endAngle: a2,
+                        edgeColor: color,
+                        isSelected: isSelected,
+                        opacity: min((sliceRevealFrac - 0.9) / 0.1, 1)
+                    )
+                }
             }
         }
     }
@@ -572,7 +592,7 @@ private struct OverlayRadialView: View {
         shadowCtx.addFilter(.shadow(color: .black.opacity((isSelected ? 0.52 : 0.30) * op),
                                     radius: isSelected ? 9 : 4,
                                     x: 0, y: isSelected ? 4 : 2))
-        shadowCtx.fill(path, with: .color(Color(white: 0.13).opacity(op)))
+        shadowCtx.fill(path, with: .color(Color(white: 0.16).opacity(op)))
 
         // Radial glass gradient: darker at the inner edge, tinted brighter outward.
         let gInner = pointOnCircle(center, inR, mid)
@@ -581,8 +601,8 @@ private struct OverlayRadialView: View {
             path,
             with: .linearGradient(
                 Gradient(colors: [
-                    color.opacity((isSelected ? 0.28 : 0.12) * op),
-                    color.opacity((isSelected ? 0.62 : 0.32) * op)
+                    color.opacity((isSelected ? 0.48 : 0.30) * op),
+                    color.opacity((isSelected ? 0.82 : 0.62) * op)
                 ]),
                 startPoint: gInner, endPoint: gOuter
             )
@@ -591,14 +611,14 @@ private struct OverlayRadialView: View {
         context.fill(
             path,
             with: .linearGradient(
-                Gradient(colors: [.white.opacity((isSelected ? 0.14 : 0.07) * op),
+                Gradient(colors: [.white.opacity((isSelected ? 0.20 : 0.12) * op),
                                   .white.opacity(0.0)]),
                 startPoint: gOuter, endPoint: gInner
             )
         )
         let edgeColor = isSelected
             ? color.opacity(0.5 * op)
-            : Color.white.opacity(0.22 * op)
+            : Color.white.opacity(0.28 * op)
         context.stroke(path, with: .color(edgeColor), lineWidth: isSelected ? 0.8 : 0.5)
         if isSelected {
             var glowCtx = context
@@ -639,12 +659,12 @@ private struct OverlayRadialView: View {
         shadowCtx.addFilter(.shadow(
             color: .black.opacity(0.52 * op), radius: 9, x: 0, y: 4
         ))
-        shadowCtx.fill(path, with: .color(Color(white: 0.13).opacity(op)))
-        context.fill(path, with: .color(color.opacity(0.62 * op)))
+        shadowCtx.fill(path, with: .color(Color(white: 0.16).opacity(op)))
+        context.fill(path, with: .color(color.opacity(0.82 * op)))
         context.fill(
             path,
             with: .linearGradient(
-                Gradient(colors: [.white.opacity(0.14 * op), .white.opacity(0)]),
+                Gradient(colors: [.white.opacity(0.20 * op), .white.opacity(0)]),
                 startPoint: pointOnCircle(center, tipR, angle),
                 endPoint: pointOnCircle(center, baseR, angle)
             )
@@ -857,6 +877,82 @@ private struct OverlayRadialView: View {
         drawCurvedText(text, context: context, center: center,
                        radius: radius, midAngle: midAngle,
                        fontSize: fontSize, maxAngle: maxAngle, opacity: opacity)
+    }
+
+    /// Draw an upright keyboard hint as a small folded corner integrated into
+    /// the slice's counter-clockwise (leading) outer edge.
+    private func drawSliceNumberFold(
+        _ number: Int,
+        context: GraphicsContext,
+        center: CGPoint,
+        innerR: CGFloat,
+        outerR: CGFloat,
+        startAngle: CGFloat,
+        endAngle: CGFloat,
+        edgeColor: Color,
+        isSelected: Bool,
+        opacity: Double
+    ) {
+        let scale: CGFloat = isSelected ? selectedSliceContentScale : 1
+        let midRadius = max((innerR + outerR) / 2, 1)
+        let leadingAngle = startAngle
+            - (isSelected ? selectedSliceEdgeExpansion / midRadius : 0)
+        let effectiveOuterR = outerR + (isSelected ? selectedSliceOuterExpansion : 0)
+        let foldDepth = (number < 10 ? 22.0 : 27.0) * scale
+        let foldArcLength = (number < 10 ? 24.0 : 31.0) * scale
+        let availableAngle = max(
+            endAngle - startAngle
+                + (isSelected ? selectedSliceEdgeExpansion * 2 / midRadius : 0),
+            0
+        )
+        let foldAngle = min(availableAngle * 0.42, foldArcLength / max(effectiveOuterR, 1))
+
+        // Bleed just beyond the slice rim so the fold remains integrated with
+        // the slice; its hairline tint echoes the compact reference treatment.
+        let rimR = effectiveOuterR + (isSelected ? 1.4 : 1.0)
+        var fold = Path()
+        fold.move(to: pointOnCircle(center, rimR, leadingAngle))
+        fold.addLine(to: pointOnCircle(
+            center, max(innerR, effectiveOuterR - foldDepth), leadingAngle
+        ))
+        fold.addLine(to: pointOnCircle(center, rimR, leadingAngle + foldAngle))
+        fold.closeSubpath()
+
+        let op = AppSettings.shared.overlayOpacity * opacity
+        context.fill(fold, with: .color(.black.opacity(0.30 * op)))
+
+        // Stroke a second path just inside the visible rim. Stroking the bleed
+        // path leaves its outer chord beyond the slice edge, so only the leading
+        // side appears; the inset keeps the hairline equally visible on top.
+        let strokeR = effectiveOuterR - 0.35 * scale
+        var foldHairline = Path()
+        foldHairline.move(to: pointOnCircle(center, strokeR, leadingAngle))
+        foldHairline.addLine(to: pointOnCircle(
+            center, max(innerR, effectiveOuterR - foldDepth), leadingAngle
+        ))
+        foldHairline.addLine(to: pointOnCircle(center, strokeR, leadingAngle + foldAngle))
+        foldHairline.closeSubpath()
+        context.stroke(
+            foldHairline,
+            with: .color(edgeColor.opacity((isSelected ? 0.72 : 0.52) * op)),
+            lineWidth: 0.55 * scale
+        )
+
+        // Keep the hint visually anchored to the folded tip, like the preview.
+        // The enlarged fold still leaves a full glyph's clearance on each edge.
+        let numberRadius = effectiveOuterR - foldDepth * 0.31
+        let numberAngle = leadingAngle + foldAngle * 0.29
+        let point = pointOnCircle(center, numberRadius, numberAngle)
+        context.draw(
+            Text(String(number))
+                .font(.system(
+                    size: (number < 10 ? 8.5 : 7.5) * scale,
+                    weight: .bold,
+                    design: .rounded
+                ))
+                .foregroundStyle(.white.opacity(0.96 * op)),
+            at: point
+        )
     }
 
     /// Draws two lines straddling the label radius. Slices below the centre read

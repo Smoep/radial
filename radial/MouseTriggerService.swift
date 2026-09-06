@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 import os
 
-private var mouseLog: Logger { RadialLog.mouse }
+private var mouseLog: RadialLogger { RadialLog.mouse }
 private let mouseCandidateMoveCancelThreshold: CGFloat = 80
 
 /// Standalone mouse-button trigger for the radial overlay.
@@ -132,7 +132,7 @@ final class MouseTriggerService {
     /// including this service's own global monitor, so the tap routes it here
     /// instead. Without this the click would be blocked but never act.
     func handleSuppressedClick(type: CGEventType, button: Int) {
-        mouseLog.info("suppressed click type=\(type.rawValue, privacy: .public) button=\(button, privacy: .public)")
+        mouseLog.info("suppressed click type=\(type.rawValue) button=\(button)")
         switch type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown: handleDown(button: button)
         case .leftMouseUp, .rightMouseUp, .otherMouseUp:       handleUp(button: button)
@@ -188,7 +188,7 @@ final class MouseTriggerService {
 
         if hold <= 0.001 {
             // Immediate engage.
-            mouseLog.info("mouse down (button \(button, privacy: .public)) → immediate open")
+            mouseLog.info("mouse down (button \(button)) → immediate open")
             onOpen?()
         } else {
             // Press-and-hold: show loading ring, engage when the timer fires.
@@ -200,7 +200,7 @@ final class MouseTriggerService {
             }
             loadingRing.show(at: nsLoc, duration: hold, delay: settings?.ringDelay ?? 0.25)
             startHoldTimer(hold)
-            mouseLog.info("mouse down (button \(button, privacy: .public)) → hold \(hold, privacy: .public)s")
+            mouseLog.info("mouse down (button \(button)) → hold \(hold)s")
         }
     }
 
@@ -246,7 +246,7 @@ final class MouseTriggerService {
     }
 
     private func resetCandidate(reason: String) {
-        mouseLog.info("mouse candidate cancelled — \(reason, privacy: .public)")
+        mouseLog.info("mouse candidate cancelled — \(reason)")
         resetCandidate()
     }
 

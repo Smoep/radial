@@ -6,10 +6,52 @@
 //
 
 import Foundation
+import AppKit
 import Testing
 @testable import Radial
 
 struct RadialTests {
+
+    @Test func firstInstallDefaultsFavorKeyboardNavigation() {
+        #expect(AppSettings.defaultHotkeyEnabled)
+        #expect(AppSettings.defaultHotkeyKeyCode == 37)
+        #expect(AppSettings.defaultHotkeyModifiers == Int(NSEvent.ModifierFlags.command.rawValue))
+        #expect(AppSettings.defaultHotkeyKeyLabel == "L")
+        #expect(!AppSettings.defaultLiftToSelect)
+        #expect(AppSettings.defaultNumberedSlicesEnabled)
+        #expect(!RadialLog.defaultEnabled)
+    }
+
+    @Test func clearLogsRemovesOnlyRadialsLogDirectory() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RadialLogTest-\(UUID().uuidString)", isDirectory: true)
+        let radialDirectory = root.appendingPathComponent("Radial", isDirectory: true)
+        let unrelatedFile = root.appendingPathComponent("keep.txt")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(
+            at: radialDirectory, withIntermediateDirectories: true
+        )
+        try Data("diagnostic".utf8).write(
+            to: radialDirectory.appendingPathComponent("Radial.log")
+        )
+        try Data("keep".utf8).write(to: unrelatedFile)
+
+        try RadialLog.clearLogFiles(at: radialDirectory)
+
+        #expect(!FileManager.default.fileExists(atPath: radialDirectory.path))
+        #expect(FileManager.default.fileExists(atPath: unrelatedFile.path))
+    }
+
+    @Test func numberKeysMapClockwiseAcrossKeyboardAndKeypad() {
+        #expect(SessionEngine.numberedSliceIndex(forKeyCode: 18) == 0)
+        #expect(SessionEngine.numberedSliceIndex(forKeyCode: 25) == 8)
+        #expect(SessionEngine.numberedSliceIndex(forKeyCode: 29) == 9)
+        #expect(SessionEngine.numberedSliceIndex(forKeyCode: 83) == 0)
+        #expect(SessionEngine.numberedSliceIndex(forKeyCode: 92) == 8)
+        #expect(SessionEngine.numberedSliceIndex(forKeyCode: 82) == 9)
+        #expect(SessionEngine.numberedSliceIndex(forKeyCode: 53) == nil)
+    }
 
     @Test func specialKeyLabels() {
         #expect(KeyRecorder.labelForKey(53, chars: "\u{1b}") == "Esc")
@@ -317,5 +359,3 @@ struct EmojiLabelTests {
                 "emoji label must now reserve more room than the old table gave it")
     }
 }
-
-

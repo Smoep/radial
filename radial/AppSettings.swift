@@ -3,29 +3,82 @@ import AppKit
 import Observation
 import OSLog
 
+/// A diagnostic logger that mirrors messages to Unified Logging and to the
+/// app-owned log file that users can clear from Settings.
+struct RadialLogger {
+    let category: String
+
+    func info(_ message: @autoclosure () -> String) {
+        RadialLog.write(message(), category: category, type: .info)
+    }
+
+    func error(_ message: @autoclosure () -> String) {
+        RadialLog.write(message(), category: category, type: .error)
+    }
+}
+
 /// Gesture tracing, off by default. When disabled the loggers are backed by
-/// `OSLog.disabled`, so the messages are never formatted at all — the cost is a
-/// single branch per call site rather than string interpolation on every frame.
+/// an early return, so messages are not evaluated or written.
 enum RadialLog {
     private static let defaultsKey = "diagnosticLogging"
+    static let defaultEnabled = false
+    private static let subsystem = "com.jos.radial"
+    private static let fileQueue = DispatchQueue(label: "com.jos.radial.diagnostic-file")
 
-    static var isEnabled: Bool = UserDefaults.standard.bool(forKey: defaultsKey) {
+    static let logDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/Radial", isDirectory: true)
+    static let logFileURL = logDirectoryURL.appendingPathComponent("Radial.log")
+
+    static var isEnabled: Bool = (UserDefaults.standard.object(forKey: defaultsKey) as? Bool)
+        ?? defaultEnabled {
         didSet {
             guard isEnabled != oldValue else { return }
             UserDefaults.standard.set(isEnabled, forKey: defaultsKey)
-            trackpad = make("trackpad")
-            mouse    = make("mouse")
-            session  = make("session")
         }
     }
 
-    private(set) static var trackpad = make("trackpad")
-    private(set) static var mouse    = make("mouse")
-    private(set) static var session  = make("session")
+    static let trackpad = RadialLogger(category: "trackpad")
+    static let mouse = RadialLogger(category: "mouse")
+    static let session = RadialLogger(category: "session")
 
-    private static func make(_ category: String) -> Logger {
-        isEnabled ? Logger(subsystem: "com.jos.radial", category: category)
-                  : Logger(OSLog.disabled)
+    fileprivate static func write(_ message: @autoclosure () -> String,
+                                  category: String, type: OSLogType) {
+        guard isEnabled else { return }
+        let rendered = message()
+        os_log("%{public}@", log: OSLog(subsystem: subsystem, category: category),
+               type: type, rendered)
+
+        fileQueue.async {
+            do {
+                try FileManager.default.createDirectory(
+                    at: logDirectoryURL, withIntermediateDirectories: true
+                )
+                if !FileManager.default.fileExists(atPath: logFileURL.path) {
+                    FileManager.default.createFile(atPath: logFileURL.path, contents: nil)
+                }
+                let handle = try FileHandle(forWritingTo: logFileURL)
+                try handle.seekToEnd()
+                let timestamp = ISO8601DateFormatter().string(from: Date())
+                try handle.write(contentsOf: Data("\(timestamp) [\(category)] \(rendered)\n".utf8))
+                try handle.close()
+            } catch {
+                // Diagnostics must never interfere with the input path.
+            }
+        }
+    }
+
+    static func clearLogFiles(at directoryURL: URL = logDirectoryURL) throws {
+        var removalError: Error?
+        fileQueue.sync {
+            do {
+                if FileManager.default.fileExists(atPath: directoryURL.path) {
+                    try FileManager.default.removeItem(at: directoryURL)
+                }
+            } catch {
+                removalError = error
+            }
+        }
+        if let removalError { throw removalError }
     }
 }
 
@@ -78,6 +131,13 @@ enum ActivationTrigger: String, CaseIterable, Identifiable {
 @Observable
 final class AppSettings {
 
+    static let defaultHotkeyEnabled = true
+    static let defaultHotkeyKeyCode = 37 // L
+    static let defaultHotkeyModifiers = Int(NSEvent.ModifierFlags.command.rawValue)
+    static let defaultHotkeyKeyLabel = "L"
+    static let defaultLiftToSelect = false
+    static let defaultNumberedSlicesEnabled = true
+
     private var saveTimer: Timer?
     private static let legacyDefaultsSuite = "com.jos.radial-tree"
     private static let migratedLegacyDefaultsKey = "migratedDefaultsFromRadialTree"
@@ -101,6 +161,7 @@ final class AppSettings {
         d.set(selectionWidth, forKey: "selectionWidth")
         d.set(menuLabelFontSize, forKey: "menuLabelFontSize")
         d.set(menuLabelWrappingEnabled, forKey: "menuLabelWrappingEnabled")
+        d.set(numberedSlicesEnabled, forKey: "numberedSlicesEnabled")
         d.set(categoryFlexibilityPercent, forKey: "categoryFlexibilityPercent")
         d.set(pauseWhileTyping, forKey: "pauseWhileTyping")
         d.set(activationTrigger.rawValue, forKey: "activationTrigger")
@@ -192,7 +253,7 @@ final class AppSettings {
 
     /// When true, lifting the finger while engaged immediately confirms the selection.
     /// When false, lifting keeps the overlay open and a separate click confirms.
-    var liftToSelect: Bool = true {
+    var liftToSelect: Bool = defaultLiftToSelect {
         didSet { scheduleSave() }
     }
 
@@ -223,6 +284,11 @@ final class AppSettings {
         didSet { scheduleSave() }
     }
 
+    /// Shows clockwise number hints and enables number-key menu navigation.
+    var numberedSlicesEnabled: Bool = defaultNumberedSlicesEnabled {
+        didSet { scheduleSave() }
+    }
+
     /// Percentage of the first ring where the selected category can still change.
     var categoryFlexibilityPercent: Double = 40 {
         didSet { scheduleSave() }
@@ -241,22 +307,22 @@ final class AppSettings {
     // MARK: - Hotkey
 
     /// Whether a keyboard shortcut can trigger the overlay.
-    var hotkeyEnabled: Bool = false {
+    var hotkeyEnabled: Bool = defaultHotkeyEnabled {
         didSet { scheduleSave() }
     }
 
     /// Virtual key code of the shortcut (-1 = none).
-    var hotkeyKeyCode: Int = -1 {
+    var hotkeyKeyCode: Int = defaultHotkeyKeyCode {
         didSet { scheduleSave() }
     }
 
     /// NSEvent.ModifierFlags.rawValue (stored as Int) for the shortcut.
-    var hotkeyModifiers: Int = 0 {
+    var hotkeyModifiers: Int = defaultHotkeyModifiers {
         didSet { scheduleSave() }
     }
 
     /// Human-readable label for the key portion, e.g. "F7" or "Space".
-    var hotkeyKeyLabel: String = "" {
+    var hotkeyKeyLabel: String = defaultHotkeyKeyLabel {
         didSet { scheduleSave() }
     }
 
@@ -342,6 +408,7 @@ final class AppSettings {
         if let v = d.object(forKey: "selectionWidth")    as? Double { selectionWidth    = v }
         if let v = d.object(forKey: "menuLabelFontSize") as? Double { menuLabelFontSize = min(max(v, 8), 18) }
         if let v = d.object(forKey: "menuLabelWrappingEnabled") as? Bool { menuLabelWrappingEnabled = v }
+        if let v = d.object(forKey: "numberedSlicesEnabled") as? Bool { numberedSlicesEnabled = v }
         if let v = d.object(forKey: "categoryFlexibilityPercent") as? Double {
             categoryFlexibilityPercent = min(max(v, 0), 50)
         }
@@ -377,6 +444,7 @@ final class AppSettings {
             "activationHoldDuration", "gridDivisions", "dragRange", "ringDelay",
             "liftToSelect", "isTestMode", "ringHeight",
             "selectionWidth", "menuLabelFontSize", "menuLabelWrappingEnabled",
+            "numberedSlicesEnabled",
             "categoryFlexibilityPercent", "pauseWhileTyping",
             "activationTrigger", "overlayOpacity", "hotkeyEnabled", "hotkeyKeyCode",
             "hotkeyModifiers", "hotkeyKeyLabel", "hotkeyMode", "doubleTapWindow",

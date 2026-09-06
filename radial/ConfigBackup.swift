@@ -18,6 +18,7 @@ struct SettingsData: Codable {
     var selectionWidth: Double?
     var menuLabelFontSize: Double?
     var menuLabelWrappingEnabled: Bool?
+    var numberedSlicesEnabled: Bool?
     var categoryFlexibilityPercent: Double?
     var pauseWhileTyping: Bool?
     var activationTrigger: String?
@@ -106,6 +107,7 @@ extension AppSettings {
             selectionWidth: selectionWidth,
             menuLabelFontSize: menuLabelFontSize,
             menuLabelWrappingEnabled: menuLabelWrappingEnabled,
+            numberedSlicesEnabled: numberedSlicesEnabled,
             categoryFlexibilityPercent: categoryFlexibilityPercent,
             pauseWhileTyping: pauseWhileTyping,
             activationTrigger: activationTrigger.rawValue,
@@ -140,6 +142,7 @@ extension AppSettings {
         if let v = d.selectionWidth { selectionWidth = v }
         if let v = d.menuLabelFontSize { menuLabelFontSize = min(max(v, 8), 18) }
         if let v = d.menuLabelWrappingEnabled { menuLabelWrappingEnabled = v }
+        if let v = d.numberedSlicesEnabled { numberedSlicesEnabled = v }
         if let v = d.categoryFlexibilityPercent { categoryFlexibilityPercent = min(max(v, 0), 50) }
         if let v = d.pauseWhileTyping { pauseWhileTyping = v }
         if let v = d.activationTrigger, let t = ActivationTrigger(rawValue: v) { activationTrigger = t }

@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var selectedTab: SettingsTab = .menu
     /// Mirrors `RadialLog.isEnabled`, which lives outside the observation system.
     @State private var diagnosticLogging = RadialLog.isEnabled
+    @State private var logClearStatus: String?
 
     enum SettingsTab: String, CaseIterable {
         case menu = "Menu", triggers = "Triggers"
@@ -118,10 +119,10 @@ struct ContentView: View {
     // MARK: - Triggers tab
 
     @ViewBuilder private var triggersTab: some View {
+        keyboardGroup
         trackpadGroup
         selectionGroup
         mouseGroup
-        keyboardGroup
         menuSwitchGroup
     }
 
@@ -275,6 +276,13 @@ struct ContentView: View {
 
             Divider().padding(.vertical, 2)
 
+            SettingsToggle("Show Slice Numbers",
+                isOn: Binding(get: { engine.settings.numberedSlicesEnabled },
+                              set: { engine.settings.numberedSlicesEnabled = $0 }),
+                caption: "Numbers slices clockwise; press 1–9 (or 0 for 10) to navigate each ring")
+
+            Divider().padding(.vertical, 2)
+
             SettingsSlider("Overlay Opacity",
                 value: Binding(get: { engine.settings.overlayOpacity * 100 },
                                set: { engine.settings.overlayOpacity = $0 / 100 }),
@@ -317,12 +325,43 @@ struct ContentView: View {
 
             Divider().padding(.vertical, 2)
 
-            SettingsToggle("Diagnostic Logging",
-                isOn: Binding(get: { diagnosticLogging },
-                              set: { diagnosticLogging = $0; RadialLog.isEnabled = $0 }),
-                caption: diagnosticLogging
-                    ? "Recording gesture traces — read them with: log show --info --last 10m --predicate 'subsystem == \"com.jos.radial\"'"
-                    : "Off — turn on only to capture a bug, then switch back off")
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Toggle("Diagnostic Logging", isOn: Binding(
+                        get: { diagnosticLogging },
+                        set: {
+                            diagnosticLogging = $0
+                            RadialLog.isEnabled = $0
+                            logClearStatus = nil
+                        }
+                    ))
+                    .toggleStyle(.switch)
+                    .font(.callout)
+
+                    Spacer()
+
+                    Button("Clear Logs") {
+                        do {
+                            try RadialLog.clearLogFiles()
+                            logClearStatus = "Radial log files cleared"
+                        } catch {
+                            logClearStatus = "Could not clear logs: \(error.localizedDescription)"
+                        }
+                    }
+                    .controlSize(.small)
+                }
+
+                Text(diagnosticLogging
+                     ? "Recording to ~/Library/Logs/Radial/Radial.log and macOS Unified Logging"
+                     : "Off — turn on only to capture a bug, then switch back off")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                if let logClearStatus {
+                    Text(logClearStatus)
+                        .font(.caption)
+                        .foregroundStyle(logClearStatus.hasPrefix("Could not") ? .red : .secondary)
+                }
+            }
         }
 
         SettingsSection(title: "Backup & Restore") {
