@@ -35,7 +35,8 @@ installation, launch, visual verification, Spaces regression testing, and rollba
   Settings → Behavior → Startup.
 - Ring Delay is no longer a user setting. The candidate overlay uses a fixed
   0.15-second anti-flicker delay internally.
-- The public user guide is served from `docs/` through GitHub Pages, and the
+- The public user guide is served from `docs/` through GitHub Pages, uses
+  isolated demo data for its real app screenshots, and the
   release history lives in `CHANGELOG.md`.
 
 ---

@@ -8,7 +8,8 @@
 - Removed the obsolete **Ring Delay** control and stale persisted appearance
   values that no longer had a user-facing effect.
 - Audited the remaining settings against their runtime behavior.
-- Added a complete first-run, action, settings and advanced-use guide.
+- Added a complete first-run, action, settings and advanced-use guide with real
+  app screenshots and numbered visual callouts.
 
 ## 1.5.8
 

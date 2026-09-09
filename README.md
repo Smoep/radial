@@ -20,7 +20,7 @@ Applications.
 > also ask for Accessibility access so Radial can observe the configured trigger
 > and execute shortcuts.
 
-![A colorful Radial menu with nested actions](Radial%20Menu%20Concept%20Dma.jpg)
+![The real Radial overlay with numbered categories and the Writing actions open](docs/assets/help/07-numbered-navigation.png)
 
 ## Start from an empty menu
 
