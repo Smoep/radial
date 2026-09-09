@@ -10,13 +10,13 @@ final class CandidateOverlay {
     private var displayLink: CVDisplayLink?
     private var startTime: CFTimeInterval = 0
     private var duration: CFTimeInterval = 0.6
-    private var visualDelay: CFTimeInterval = 0.15
+    /// A short fixed delay prevents a flash during ordinary quick taps.
+    private let visualDelay: CFTimeInterval = 0.15
 
     private let ringSize: CGFloat = 40
 
-    func show(at screenPoint: NSPoint, duration: CFTimeInterval, delay: CFTimeInterval = 0.25) {
+    func show(at screenPoint: NSPoint, duration: CFTimeInterval) {
         self.duration = duration
-        self.visualDelay = delay
         self.startTime = CACurrentMediaTime()
 
         if overlayWindow == nil {

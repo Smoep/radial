@@ -1,68 +1,72 @@
 # Radial
 
-**Execute any action in one gesture — touch, slide, lift.**
+**Execute any Mac action in one fluid gesture.**
 
-Radial is a macOS launcher that lives in your trackpad. Touch and hold anywhere, a circular menu appears at your cursor, slide your finger to what you want, and lift. No mouse movement, no reaching for a keyboard shortcut, no hunting through menus — just one continuous motion.
+Radial is a menu-bar launcher for macOS. Open a circular menu at the pointer,
+move through categories and actions, then lift or click to run the selection.
+Build one global menu or give individual apps their own context-specific menus.
 
-## Download
+## Download Radial 1.5.9
 
-[**→ Download Radial.zip from the latest release**](https://github.com/Smoep/radial/releases/latest)
+[**Download Radial.zip from the latest release**](https://github.com/Smoep/radial/releases/latest)
 
-Unzip and drag **Radial.app** to your Applications folder.
+New to Radial? Follow the [illustrated setup and settings guide](https://smoep.github.io/radial/).
 
-> **First launch:** macOS may show a security warning because this download is not notarized for public distribution.
-> Right-click (or Control-click) the app → **Open** → **Open**. You only need to do this once.
+Requires **macOS 26.4 or later**. Unzip the download and move **Radial.app** to
+Applications.
 
-![Radial Menu Concept](Radial%20Menu%20Concept%20Dma.jpg)
+> **First launch:** Radial is signed but not notarized. Right-click (or
+> Control-click) **Radial.app**, choose **Open**, then confirm **Open**. macOS will
+> also ask for Accessibility access so Radial can observe the configured trigger
+> and execute shortcuts.
 
----
+![A colorful Radial menu with nested actions](Radial%20Menu%20Concept%20Dma.jpg)
 
-## How it works
+## Start from an empty menu
 
-1. **Touch & hold** — rest your finger on the trackpad for about half a second. A progress ring shows you it's counting.
-2. **The menu appears** — a circular overlay opens right at your cursor, arranged in rings. Categories in the inner ring, actions in the outer ring.
-3. **Slide to your action** — no clicking, just move your finger. The slice you're on highlights instantly.
-4. **Lift to confirm** — the action fires the moment your finger leaves the trackpad.
+A new installation intentionally contains no sample actions. To make your first
+working menu:
 
-The center is always a cancel zone. If you change your mind, slide back to the middle and lift.
+1. Open Radial from the menu-bar icon and choose **Settings**.
+2. In **Menu → Global Menu**, click **Add Category**.
+3. Name it, choose an SF Symbol or emoji and a colour, then click **Save**.
+4. Expand the category and click **Add Action**.
+5. Name the action, choose its type and fill in the type-specific value.
+6. Click **Save**, open the menu with your configured trigger and select it.
 
----
+The [complete guide](https://smoep.github.io/radial/#first-menu) explains every
+action type, trigger and appearance control, including numbered slices, ring
+height, slice width, nested categories and app-specific menus.
 
-## What you can do
+## Features
 
-- **Run a keyboard shortcut** — trigger any key combination in the app that's currently in focus
-- **Launch an app** — open any application in one gesture
-- **Open a folder** — jump straight to a location in Finder
-- **Open a file** — open any document in its default app
-- **Open a URL** — a webpage, a mail link, or anything with a URL scheme
-- **Control media** — play/pause, skip tracks, adjust volume
-- **Run a shell command** — execute any script or terminal command in the background
-- **Trigger a Shortcut** — run any workflow from the macOS Shortcuts app
+- Keyboard, trackpad and mouse triggers, each independently configurable
+- Keyboard shortcuts, applications, folders, files, URLs, Apple Shortcuts,
+  shell commands, media controls and multi-step automations
+- Unlimited nested categories with drag-and-drop organization
+- A global menu plus optional menus for specific applications
+- Numbered slices for keyboard navigation (`1`–`9`, and `0` for slice 10)
+- Adjustable ring height, slice width, label size, wrapping and overlay opacity
+- Lift-to-select or click-to-confirm interaction styles
+- Start at Login using the native macOS login-item service
+- Backup and restore for menus and settings
+- Test Mode for safely checking a menu without running its actions
 
----
+The center of the overlay is always a safe place to return or cancel. Radial
+runs quietly without a Dock icon and keeps menu data locally in macOS preferences.
 
-## What makes it flexible
+## Project documentation
 
-- **Different menus per app** — set up a separate menu for each application. Switching to Chrome, VS Code, or Figma automatically loads the right menu. Press Space while the overlay is open to toggle between the app menu and your global one.
-- **Unlimited depth** — categories can contain subcategories, which can contain subcategories. Build as deep a hierarchy as you need.
-- **Drag-and-drop editor** — reorder, nest, and color-code everything from the settings window. No config files.
-- **Smart labels** — long names wrap onto two lines automatically. Use ⌥Return in the name field to set the break point yourself. CJK and emoji are supported.
-- **Two ways to select** — lift your finger to confirm (fast), or keep the overlay open and click (more forgiving for new users).
-- **Backup & restore** — export your entire setup as a file and import it on another machine.
-- **Quiet by default** — no Dock icon, no windows until you open settings from the menu bar.
-
----
-
-## Requirements
-
-- macOS 26 (Tahoe) or later
-
----
+- [User guide](https://smoep.github.io/radial/)
+- [Release history](CHANGELOG.md)
+- [Deployment runbook](DEPLOYMENT_RUNBOOK.md)
+- [Engineering handoff](HANDOFF.md)
+- [Lessons learned](LESSONS_LEARNED.md)
 
 ## Build from source
 
-Maintainers and coding agents should follow [DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md)
-for signed local deployment, rollback, and UI-level verification. A successful
+Maintainers and coding agents must follow [DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md)
+for signed local deployment, rollback and UI-level verification. A successful
 build alone is not considered a deployed test version.
 
 ```bash
@@ -70,11 +74,10 @@ git clone https://github.com/Smoep/radial.git
 cd radial
 xcodebuild -project radial.xcodeproj -scheme radial -configuration Release \
   -derivedDataPath build-release build
-cp -R build-release/Build/Products/Release/Radial.app /Applications/Radial.app
-open -a /Applications/Radial.app
 ```
 
----
+The established project signing identity is required for a locally deployable
+build. Do not re-sign the finished app ad hoc.
 
 ## License
 

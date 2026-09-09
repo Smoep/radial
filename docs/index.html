@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Learn how to build a Radial menu, configure triggers, understand every action type and tune the overlay for fast use.">
+  <meta name="theme-color" content="#090a10">
+  <title>Radial Help — Your actions, one gesture away</title>
+  <link rel="stylesheet" href="assets/help/help.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to help</a>
+  <nav class="site-nav" aria-label="Main navigation"><div class="nav-inner">
+    <a class="brand" href="#top"><span class="brand-mark">R</span><span>Radial Help</span></a>
+    <a class="nav-link" href="#first-menu">First menu</a><a class="nav-link" href="#actions">Actions</a><a class="nav-link" href="#settings">Settings</a>
+    <a class="button primary" href="https://github.com/Smoep/radial/releases/latest">Download Radial</a>
+  </div></nav>
+
+  <main id="main">
+    <header class="hero" id="top">
+      <p class="eyebrow">A launcher shaped around you</p>
+      <h1>Your actions, one gesture away.</h1>
+      <p class="hero-copy">Radial puts a customizable circular menu under the pointer. Open it, move toward what you want and confirm—without hunting through menus or memorizing every shortcut.</p>
+      <div class="hero-actions"><a class="button primary" href="https://github.com/Smoep/radial/releases/latest">Download Radial 1.5.9</a><a class="button" href="#install">Start from scratch ↓</a></div>
+      <p class="hero-note">Requires macOS 26.4 or later · Signed, not notarized · No sample content on a fresh install</p>
+      <div class="radial-demo" role="img" aria-label="A stylized Radial menu with eight colorful slices around a center button">
+        <span class="orbit"></span><span class="slice s1">⌘</span><span class="slice s2">◫</span><span class="slice s3">▶</span><span class="slice s4">↗</span><span class="slice s5">♪</span><span class="slice s6">⌂</span><span class="slice s7">⚙</span><span class="slice s8">★</span><span class="hub">R</span>
+      </div>
+      <nav class="guide-nav" aria-label="Help topics"><a href="#install">Install</a><a href="#first-menu">First category &amp; action</a><a href="#using">Using the ring</a><a href="#actions">Action types</a><a href="#settings">All settings</a><a href="#tips">Tips &amp; tricks</a><a href="#app-menus">App menus</a><a href="#backup">Backup</a></nav>
+    </header>
+
+    <section id="install">
+      <div class="section-heading"><p class="eyebrow">Start here</p><h2>Install Radial and grant access.</h2><p class="lede">A fresh installation opens with an empty menu. That is deliberate: your first slices should reflect how you work.</p></div>
+      <div class="task-grid">
+        <article class="task"><span class="step-number">1</span><h3>Install the app</h3><ol class="steps"><li>Download the latest <strong>Radial.zip</strong>.</li><li>Unzip it and drag <strong>Radial.app</strong> to Applications.</li><li>Right-click Radial, choose <strong>Open</strong>, then confirm. This one-time step is needed because the release is signed but not notarized.</li></ol></article>
+        <article class="task"><span class="step-number">2</span><h3>Allow Accessibility</h3><ol class="steps"><li>Open <strong>System Settings → Privacy &amp; Security → Accessibility</strong> when macOS asks.</li><li>Enable Radial. Quit and reopen it if macOS does not apply the permission immediately.</li><li>Look for the Radial icon in the menu bar; it runs without a Dock icon.</li></ol></article>
+      </div>
+      <div class="callout"><strong>Optional:</strong> open Settings → Behavior and enable <strong>Start Radial at Login</strong>. If macOS requires approval, Radial offers a button to open Login Items settings.</div>
+    </section>
+
+    <section id="first-menu">
+      <div class="section-heading"><p class="eyebrow">Your first working ring</p><h2>Create a category, then give it an action.</h2><p class="lede">Categories form the first ring. Moving into one opens its actions on the next ring. Subcategories can continue to any depth.</p></div>
+      <div class="task-grid">
+        <article class="task"><span class="step-number">1</span><h3>Create the category</h3><ol class="steps"><li>Click the Radial menu-bar icon and open <strong>Settings</strong>.</li><li>Stay in <strong>Menu → Global Menu</strong> and click <strong>Add Category</strong>.</li><li>Name it—for example, “Writing.”</li><li>Choose an SF Symbol or paste an emoji, select a colour, then click <strong>Save</strong>.</li></ol><p class="tip">The category becomes a first-ring slice and expands automatically in the editor.</p></article>
+        <article class="task"><span class="step-number">2</span><h3>Add the first action</h3><ol class="steps"><li>Inside “Writing,” click <strong>Add Action</strong>.</li><li>Enter a short name such as “Copy.”</li><li>Keep <strong>Type: Keyboard Shortcut</strong>, click the recorder and press <strong>⌘C</strong>.</li><li>Choose an icon and colour if wanted, then click <strong>Save</strong>.</li></ol><p class="tip">Try <strong>Open Application</strong> for a visible first test; browse to an app and keep “Use app’s own icon” enabled.</p></article>
+        <article class="task wide"><span class="step-number">3</span><h3>Test the complete gesture</h3><ol class="steps compact"><li>Open <strong>Triggers</strong> and configure at least one keyboard, trackpad or mouse trigger.</li><li>Turn on <strong>Behavior → Test Mode</strong> for a harmless practice run.</li><li>Invoke Radial and move from the center through “Writing” onto “Copy.”</li><li>Lift if <strong>Lift to Select</strong> is enabled, or click to confirm. Turn Test Mode off when ready.</li></ol></article>
+      </div>
+    </section>
+
+    <section id="using"><div class="two-column"><div><p class="eyebrow">Using the overlay</p><h2>Outward to choose. Inward to reconsider.</h2><p class="lede">The pointer starts in the center. Enter a category slice to reveal its children, then continue outward to an action.</p><ul class="plain-list"><li><strong>Highlight:</strong> move over a slice.</li><li><strong>Go back:</strong> move inward to the previous ring.</li><li><strong>Cancel:</strong> return to the center and dismiss.</li><li><strong>Confirm:</strong> lift, release or click according to your trigger settings.</li></ul></div><div class="mini-ring" aria-hidden="true"><span>Category</span><b>Center</b><i>Action</i></div></div></section>
+
+    <section id="actions">
+      <div class="section-heading"><p class="eyebrow">Action types</p><h2>From one keystroke to a complete workflow.</h2><p class="lede">Every action has a name, icon and colour. Its type determines what happens when selected.</p></div>
+      <div class="card-grid actions-grid">
+        <article class="card"><div class="card-icon">⌘</div><h3>Keyboard Shortcut</h3><p>Record a key plus Command, Shift, Option or Control. Radial sends it to the active app.</p></article>
+        <article class="card"><div class="card-icon">A</div><h3>Open Application</h3><p>Browse to an app and optionally show its own icon on the slice.</p></article>
+        <article class="card"><div class="card-icon">⌂</div><h3>Open Folder or File</h3><p>Choose a local item. Folders open in Finder and files use their default app.</p></article>
+        <article class="card"><div class="card-icon">↗</div><h3>Open URL</h3><p>Open a web address, <code>mailto:</code> link or app URL scheme such as <code>raycast://</code>.</p></article>
+        <article class="card"><div class="card-icon">◈</div><h3>Shortcuts App</h3><p>Select a workflow from Apple’s Shortcuts app. Refresh if a new one is not listed.</p></article>
+        <article class="card"><div class="card-icon">&gt;_</div><h3>Shell Command</h3><p>Run a command in the background. Only use commands you understand and trust.</p></article>
+        <article class="card"><div class="card-icon">♪</div><h3>Media Control</h3><p>Play/pause, next, previous, volume up, volume down or mute.</p></article>
+        <article class="card"><div class="card-icon">⋯</div><h3>Automation</h3><p>Combine actions into ordered steps and set the delay before each next step.</p></article>
+      </div>
+    </section>
+
+    <section id="settings">
+      <div class="section-heading"><p class="eyebrow">Settings explained</p><h2>Tune invocation, selection and appearance separately.</h2></div>
+      <div class="settings-list">
+        <article class="setting-group"><h3>Triggers</h3><dl><dt>Keyboard Shortcut</dt><dd>Choose a key combination or double-tap a modifier. Double-tap Window controls the allowed interval.</dd><dt>Trackpad Trigger</dt><dd>Use Tap to Click or a physical Click, with an instant-to-1.5-second hold.</dd><dt>Lift to Select</dt><dd>Confirm by lifting. Turn it off to wait for another tap or click.</dd><dt>Mouse Trigger</dt><dd>Use left-click-and-hold or middle-click, and optionally Release to Select.</dd><dt>Switch Menu Key</dt><dd>Use the configured key—or scroll—to switch an app menu and global menu.</dd></dl></article>
+        <article class="setting-group"><h3>Appearance</h3><dl><dt>Ring Height</dt><dd>Changes every ring’s radial thickness from 30 to 100 pt. Increase it for larger targets; decrease it for a compact menu.</dd><dt>Slice Width</dt><dd>Changes the arc width of sub-ring actions from 20 to 80 pt. Increase it to spread out crowded rings.</dd><dt>Label Font Size</dt><dd>Sets menu text from 8 to 18 pt.</dd><dt>Wrap Labels</dt><dd>Allows long labels to use two curved lines.</dd><dt>Show Slice Numbers</dt><dd>Numbers slices clockwise; press 1–9, or 0 for slice 10, on each ring.</dd><dt>Overlay Opacity</dt><dd>Controls how much screen content remains visible behind Radial.</dd></dl></article>
+        <article class="setting-group"><h3>Behavior</h3><dl><dt>Start Radial at Login</dt><dd>Registers Radial with the native macOS login-item service.</dd><dt>Category Flexibility</dt><dd>Lets you change categories closer to the center before the choice locks. Higher values forgive less precise paths.</dd><dt>Pause While Typing</dt><dd>Briefly suspends tracking after a keystroke to prevent accidental activation.</dd><dt>Test Mode</dt><dd>Shows and navigates the real menu but suppresses execution.</dd><dt>Diagnostic Logging</dt><dd>Writes troubleshooting data to <code>~/Library/Logs/Radial/Radial.log</code>. Leave it off except while capturing a problem.</dd></dl></article>
+      </div>
+    </section>
+
+    <section id="tips">
+      <div class="section-heading"><p class="eyebrow">Tips &amp; tricks</p><h2>Make the menu faster after it feels familiar.</h2></div>
+      <div class="tip-grid">
+        <article class="tip-card"><h3>Show numbers</h3><p>Enable <strong>Show Slice Numbers</strong>. Numbers restart on each ring; slice 10 uses <strong>0</strong>.</p></article>
+        <article class="tip-card"><h3>Change the size</h3><p>Raise <strong>Ring Height</strong> for thicker targets and <strong>Slice Width</strong> to spread crowded action rings. Lower them for a tighter overlay.</p></article>
+        <article class="tip-card"><h3>Build muscle memory</h3><p>Drag items to reorder them. Keep frequent categories in consistent directions and frequent actions early in their ring.</p></article>
+        <article class="tip-card"><h3>Break long labels</h3><p>Enable Wrap Labels, or press <strong>⌥Return</strong> in a name field to choose the line break yourself.</p></article>
+        <article class="tip-card"><h3>Nest and reuse</h3><p>Drag an item onto a category to nest it. Duplicate, copy or move actions instead of rebuilding them.</p></article>
+        <article class="tip-card"><h3>Practice safely</h3><p>Use Test Mode while reorganizing, especially with shell commands or automations.</p></article>
+        <article class="tip-card"><h3>Speed or certainty</h3><p>Lift to Select is fastest once learned. Turn it off while learning if you prefer an explicit click.</p></article>
+        <article class="tip-card"><h3>Use the center</h3><p>The center is your escape route. Moving inward also backs out of a subcategory.</p></article>
+      </div>
+    </section>
+
+    <section id="app-menus"><div class="section-heading"><p class="eyebrow">App-specific menus</p><h2>Put relevant tools under the pointer.</h2><p class="lede">Radial identifies the application under the pointer and uses its menu when available.</p></div><ol class="steps panel"><li>Open <strong>Menu → App Menus</strong> and add an application.</li><li>Build its categories and actions like the global menu.</li><li>Invoke Radial over that app. Use the Switch Menu Key or scroll to show the global menu.</li><li>Copy or move existing actions between menus instead of rebuilding them.</li></ol></section>
+
+    <section id="backup"><div class="two-column"><div><p class="eyebrow">Backup &amp; restore</p><h2>Experiment without losing a setup you like.</h2><p class="lede">Settings → Behavior includes Backup &amp; Restore. Export before a major reorganization, then import after a reinstall or on another Mac.</p></div><div class="callout"><strong>Good habit:</strong> keep a dated backup after your directions become muscle memory. Restoring changes the menu and settings to the saved snapshot.</div></div></section>
+  </main>
+  <footer><span>Radial for macOS</span><span><a href="https://github.com/Smoep/radial">Source on GitHub</a> · <a href="https://github.com/Smoep/radial/issues">Report a problem</a></span></footer>
+</body>
+</html>

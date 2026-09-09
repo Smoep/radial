@@ -9,9 +9,6 @@ import UniformTypeIdentifiers
 /// values present are applied on import.
 struct SettingsData: Codable {
     var activationHoldDuration: Double?
-    var gridDivisions: Int?
-    var dragRange: Double?
-    var ringDelay: Double?
     var liftToSelect: Bool?
     var isTestMode: Bool?
     var ringHeight: Double?
@@ -98,9 +95,6 @@ extension AppSettings {
     var backupSnapshot: SettingsData {
         SettingsData(
             activationHoldDuration: activationHoldDuration,
-            gridDivisions: gridDivisions,
-            dragRange: dragRange,
-            ringDelay: ringDelay,
             liftToSelect: liftToSelect,
             isTestMode: isTestMode,
             ringHeight: ringHeight,
@@ -133,9 +127,6 @@ extension AppSettings {
     /// clamped to the same ranges used when loading from UserDefaults.
     func apply(_ d: SettingsData) {
         if let v = d.activationHoldDuration { activationHoldDuration = v }
-        if let v = d.gridDivisions { gridDivisions = v }
-        if let v = d.dragRange { dragRange = v }
-        if let v = d.ringDelay { ringDelay = v }
         if let v = d.liftToSelect { liftToSelect = v }
         if let v = d.isTestMode { isTestMode = v }
         if let v = d.ringHeight { ringHeight = v }

@@ -366,8 +366,7 @@ final class TrackpadService {
                 tzPrint("MT: finger down (0→1), starting hold timer")
                 let cursorPt = NSEvent.mouseLocation
                 let holdDur = settings?.activationHoldDuration ?? 0.6
-                let ringDel = settings?.ringDelay ?? 0.25
-                candidateOverlay.show(at: cursorPt, duration: holdDur, delay: ringDel)
+                candidateOverlay.show(at: cursorPt, duration: holdDur)
                 startHoldTimer()
             } else {
                 tzPrint("MT: finger down (0→1), waiting for \(trigger.rawValue)")
@@ -457,8 +456,7 @@ final class TrackpadService {
                         lastCandidateScreen = screenPoint
                     }
                     let holdDur = settings?.activationHoldDuration ?? 0.6
-                    let ringDel = settings?.ringDelay ?? 0.25
-                    candidateOverlay.show(at: nsLoc, duration: holdDur, delay: ringDel)
+                    candidateOverlay.show(at: nsLoc, duration: holdDur)
                     startHoldTimer()
                     tzLog.info("leftMouseDown → click hold started (\(holdDur)s)")
                 }

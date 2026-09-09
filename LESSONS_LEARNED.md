@@ -12,7 +12,7 @@ For the mandatory signed build/install/launch/visual-verification workflow, see
 | Setting | Value | Notes |
 |---|---|---|
 | Activation hold duration | 0.6 s | Feels intentional but not slow |
-| Candidate ring delay | 0.25 s | Prevents flash on quick taps |
+| Candidate visual delay | 0.15 s, fixed | Prevents flash on quick taps; not user-configurable |
 | Finger-move cancel threshold | 3 pt | Lets users still use trackpad normally |
 | Delta guard — position/radius | > 0.5 pt | Invisible to user, cuts SwiftUI diffs |
 | Delta guard — angle | > 0.005 rad (≈0.3°) | Same — eliminates jitter redraws |

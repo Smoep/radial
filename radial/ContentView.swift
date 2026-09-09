@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ContentView: View {
     private let engine = SessionEngine.shared
+    private let loginItem = LoginItemManager.shared
     @State private var selectedTab: SettingsTab = .menu
     /// Mirrors `RadialLog.isEnabled`, which lives outside the observation system.
     @State private var diagnosticLogging = RadialLog.isEnabled
@@ -95,7 +96,10 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: engine.finalizedZoneID != nil)
-        .onAppear { engine.start() }
+        .onAppear {
+            engine.start()
+            loginItem.refresh()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .trackZoneToggleTracking)) { _ in
             if engine.isRunning { engine.stop() } else { engine.start() }
         }
@@ -292,15 +296,21 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var behaviorTab: some View {
+        SettingsSection(title: "Startup") {
+            SettingsToggle("Start Radial at Login",
+                isOn: Binding(get: { loginItem.isRegistered },
+                              set: { loginItem.setRegistered($0) }),
+                caption: loginItemCaption)
+
+            if loginItem.requiresApproval {
+                Button("Open Login Items Settings") {
+                    loginItem.openSystemSettings()
+                }
+                .controlSize(.small)
+            }
+        }
+
         SettingsSection(title: "Behavior") {
-            SettingsSlider("Ring Delay",
-                value: Binding(get: { engine.settings.ringDelay },
-                               set: { engine.settings.ringDelay = $0 }),
-                range: 0.05...0.80, step: 0.05, format: "%.2fs",
-                caption: "Delay before the loading ring appears — avoids flicker on quick taps")
-
-            Divider().padding(.vertical, 2)
-
             SettingsSlider("Category Flexibility",
                 value: Binding(get: { engine.settings.categoryFlexibilityPercent },
                                set: { engine.settings.categoryFlexibilityPercent = $0 }),
@@ -387,6 +397,18 @@ struct ContentView: View {
                 .controlSize(.large)
             }
         }
+    }
+
+    private var loginItemCaption: String {
+        if let error = loginItem.errorMessage {
+            return "Could not update the login item: \(error)"
+        }
+        if loginItem.requiresApproval {
+            return "Allow Radial in System Settings to finish enabling automatic launch"
+        }
+        return loginItem.isRegistered
+            ? "Radial will open automatically when you log in"
+            : "Radial will stay closed until you open it"
     }
 }
 

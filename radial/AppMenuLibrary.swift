@@ -98,7 +98,7 @@ final class AppMenuLibrary {
     func store(for bundleID: String) -> RadialMenuStore? {
         guard hasMenu(for: bundleID) else { return nil }
         if let existing = stores[bundleID] { return existing }
-        let store = RadialMenuStore(storageKey: Self.storageKey(for: bundleID), seedDefaults: false)
+        let store = RadialMenuStore(storageKey: Self.storageKey(for: bundleID))
         stores[bundleID] = store
         return store
     }

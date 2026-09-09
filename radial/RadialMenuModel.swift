@@ -129,7 +129,7 @@ extension ActionMapping {
 
 /// Legacy first-ring container. Menus used to be `[RadialCategory]`; they are
 /// now a flat `[RadialAction]` tree. Kept so stored data and old backups still
-/// decode, and so the built-in defaults stay readable.
+/// decode.
 struct RadialCategory: Codable, Identifiable {
     var id: String           // e.g. "media"
     var label: String        // e.g. "Media"
@@ -160,7 +160,7 @@ let radialDefaultColorHex = "#808080"
 final class RadialMenuStore {
 
     /// The Global Menu.
-    static let shared = RadialMenuStore(storageKey: "radialMenuCategories", seedDefaults: true)
+    static let shared = RadialMenuStore(storageKey: "radialMenuCategories")
 
     /// First-ring items.
     var items: [RadialAction] = [] {
@@ -169,12 +169,10 @@ final class RadialMenuStore {
 
     private let storageKey: String
 
-    init(storageKey: String, seedDefaults: Bool) {
+    init(storageKey: String) {
         self.storageKey = storageKey
         if let data = UserDefaults.standard.data(forKey: storageKey) {
-            items = Self.decodeMenu(from: data) ?? (seedDefaults ? Self.defaultItems : [])
-        } else if seedDefaults {
-            items = Self.defaultItems
+            items = Self.decodeMenu(from: data) ?? []
         }
     }
 
@@ -194,11 +192,6 @@ final class RadialMenuStore {
         if let data = try? JSONEncoder().encode(items) {
             UserDefaults.standard.set(data, forKey: storageKey)
         }
-    }
-
-    /// Reset to defaults.
-    func resetToDefaults() {
-        items = Self.defaultItems
     }
 
     /// Access an item by index path.
@@ -328,120 +321,4 @@ final class RadialMenuStore {
             siblings.insert(item, at: min(to, siblings.count))
         }
     }
-
-    // MARK: - Default menu
-
-    /// Built-in Global Menu, authored as categories and flattened into items.
-    static var defaultItems: [RadialAction] { defaultCategories.map { $0.asAction } }
-
-    private static let defaultCategories: [RadialCategory] = [
-        RadialCategory(
-            id: "media", label: "Media", systemImage: "play.circle.fill",
-            colorHex: "#34C759",
-            actions: [
-                RadialAction(id: "media.playPause", label: "Play/Pause", systemImage: "playpause.fill",
-                             actionType: .mediaControl,
-                             actionConfig: .init(mediaAction: .playPause)),
-                RadialAction(id: "media.next", label: "Next", systemImage: "forward.fill",
-                             actionType: .mediaControl,
-                             actionConfig: .init(mediaAction: .nextTrack)),
-                RadialAction(id: "media.prev", label: "Previous", systemImage: "backward.fill",
-                             actionType: .mediaControl,
-                             actionConfig: .init(mediaAction: .prevTrack)),
-                RadialAction(id: "media.volUp", label: "Vol Up", systemImage: "speaker.plus.fill",
-                             actionType: .mediaControl,
-                             actionConfig: .init(mediaAction: .volumeUp)),
-                RadialAction(id: "media.volDown", label: "Vol Down", systemImage: "speaker.minus.fill",
-                             actionType: .mediaControl,
-                             actionConfig: .init(mediaAction: .volumeDown)),
-                RadialAction(id: "media.mute", label: "Mute", systemImage: "speaker.slash.fill",
-                             actionType: .mediaControl,
-                             actionConfig: .init(mediaAction: .mute)),
-            ]
-        ),
-        RadialCategory(
-            id: "apps", label: "Apps", systemImage: "square.grid.2x2.fill",
-            colorHex: "#007AFF",
-            actions: [
-                RadialAction(id: "apps.safari", label: "Safari", systemImage: "safari.fill",
-                             actionType: .openApplication,
-                             actionConfig: .init(appPath: "Safari")),
-                RadialAction(id: "apps.finder", label: "Finder", systemImage: "folder.fill",
-                             actionType: .openApplication,
-                             actionConfig: .init(appPath: "Finder")),
-                RadialAction(id: "apps.terminal", label: "Terminal", systemImage: "terminal.fill",
-                             actionType: .openApplication,
-                             actionConfig: .init(appPath: "Terminal")),
-                RadialAction(id: "apps.messages", label: "Messages", systemImage: "message.fill",
-                             actionType: .openApplication,
-                             actionConfig: .init(appPath: "Messages")),
-                RadialAction(id: "apps.mail", label: "Mail", systemImage: "envelope.fill",
-                             actionType: .openApplication,
-                             actionConfig: .init(appPath: "Mail")),
-                RadialAction(id: "apps.notes", label: "Notes", systemImage: "note.text",
-                             actionType: .openApplication,
-                             actionConfig: .init(appPath: "Notes")),
-            ]
-        ),
-        RadialCategory(
-            id: "windows", label: "Windows", systemImage: "macwindow",
-            colorHex: "#FF9500",
-            actions: [
-                RadialAction(id: "win.minimize", label: "Minimize", systemImage: "minus.square",
-                             actionType: .keyboardShortcut,
-                             actionConfig: .init(keyCode: 46, keyChar: "m", keyLabel: "M", useCommand: true)),
-                RadialAction(id: "win.close", label: "Close", systemImage: "xmark.square",
-                             actionType: .keyboardShortcut,
-                             actionConfig: .init(keyCode: 13, keyChar: "w", keyLabel: "W", useCommand: true)),
-                RadialAction(id: "win.fullscreen", label: "Fullscreen", systemImage: "arrow.up.left.and.arrow.down.right",
-                             actionType: .keyboardShortcut,
-                             actionConfig: .init(keyCode: 3, keyChar: "f", keyLabel: "F", useCommand: true, useControl: true)),
-                RadialAction(id: "win.mission", label: "Mission Ctrl", systemImage: "rectangle.3.group",
-                             actionType: .shellCommand,
-                             actionConfig: .init(shellCommand: "osascript -e 'tell application \"Mission Control\" to launch'")),
-                RadialAction(id: "win.hide", label: "Hide", systemImage: "eye.slash",
-                             actionType: .keyboardShortcut,
-                             actionConfig: .init(keyCode: 4, keyChar: "h", keyLabel: "H", useCommand: true)),
-                RadialAction(id: "win.quit", label: "Quit App", systemImage: "power",
-                             actionType: .keyboardShortcut,
-                             actionConfig: .init(keyCode: 12, keyChar: "q", keyLabel: "Q", useCommand: true)),
-            ]
-        ),
-        RadialCategory(
-            id: "system", label: "System", systemImage: "gearshape.fill",
-            colorHex: "#AF52DE",
-            actions: [
-                RadialAction(id: "sys.screenshot", label: "Screenshot", systemImage: "camera.viewfinder",
-                             actionType: .keyboardShortcut,
-                             actionConfig: .init(keyCode: 23, keyChar: "5", keyLabel: "5", useCommand: true, useShift: true)),
-                RadialAction(id: "sys.spotlight", label: "Spotlight", systemImage: "magnifyingglass",
-                             actionType: .keyboardShortcut,
-                             actionConfig: .init(keyCode: 49, keyLabel: "Space", useCommand: true)),
-                RadialAction(id: "sys.dnd", label: "Do Not Disturb", systemImage: "moon.fill",
-                             actionType: .shellCommand,
-                             actionConfig: .init(shellCommand: "shortcuts run \"Toggle Do Not Disturb\"")),
-                RadialAction(id: "sys.lock", label: "Lock Screen", systemImage: "lock.fill",
-                             actionType: .keyboardShortcut,
-                             actionConfig: .init(keyCode: 12, keyChar: "q", keyLabel: "Q", useCommand: true, useControl: true)),
-            ]
-        ),
-        RadialCategory(
-            id: "chinese-test", label: "中文测试", systemImage: "character.bubble.fill",
-            colorHex: "#00A6A6",
-            actions: [
-                RadialAction(id: "chinese-test.settings", label: "设置", systemImage: "gearshape.fill",
-                             actionType: .openApplication,
-                             actionConfig: .init(appPath: "System Settings")),
-                RadialAction(id: "chinese-test.browser", label: "打开浏览器", systemImage: "safari.fill",
-                             actionType: .openApplication,
-                             actionConfig: .init(appPath: "Safari")),
-                RadialAction(id: "chinese-test.music", label: "音乐播放控制", systemImage: "playpause.fill",
-                             actionType: .mediaControl,
-                             actionConfig: .init(mediaAction: .playPause)),
-                RadialAction(id: "chinese-test.duplicate-tab", label: "复制当前标签页", systemImage: "rectangle.on.rectangle",
-                             actionType: .shortcutsApp,
-                             actionConfig: .init(shortcutName: "Duplicate Tab")),
-            ]
-        ),
-    ]
 }

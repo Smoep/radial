@@ -27,6 +27,17 @@ The operational definition of done for local fixes is documented in
 [DEPLOYMENT_RUNBOOK.md](DEPLOYMENT_RUNBOOK.md). Follow it for signing, recoverable
 installation, launch, visual verification, Spaces regression testing, and rollback.
 
+### Current release state (1.5.9)
+
+- Fresh installations intentionally start with an empty global menu; existing
+  `radialMenuCategories` preferences continue to load unchanged.
+- **Start Radial at Login** is backed by `SMAppService.mainApp` and appears under
+  Settings → Behavior → Startup.
+- Ring Delay is no longer a user setting. The candidate overlay uses a fixed
+  0.15-second anti-flicker delay internally.
+- The public user guide is served from `docs/` through GitHub Pages, and the
+  release history lives in `CHANGELOG.md`.
+
 ---
 
 ## 1. What Radial Is
@@ -56,7 +67,8 @@ The #1 design rule. Users should never have to move the mouse at all.
 - Fills over the configurable hold duration (default 0.6s)
 - Users NEED to see this progress — without it, the hold feels broken
 - If finger moves >3pt during hold → cancel (they're using trackpad normally)
-- Ring delay (default 0.25s) prevents flash on quick taps
+- A fixed 0.15-second visual delay prevents flashes on quick taps. This is an
+  implementation detail, not a user-facing setting.
 
 ### 2.3 Two Selection Modes
 - **Lift-to-select** (default): Lift finger while hovering over item → execute

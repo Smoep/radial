@@ -152,9 +152,6 @@ final class AppSettings {
     private func persistAll() {
         let d = UserDefaults.standard
         d.set(activationHoldDuration, forKey: "activationHoldDuration")
-        d.set(gridDivisions, forKey: "gridDivisions")
-        d.set(dragRange, forKey: "dragRange")
-        d.set(ringDelay, forKey: "ringDelay")
         d.set(liftToSelect, forKey: "liftToSelect")
         d.set(isTestMode, forKey: "isTestMode")
         d.set(ringHeight, forKey: "ringHeight")
@@ -227,25 +224,6 @@ final class AppSettings {
 
     /// Minimum touch hold time (seconds) before entering Active.
     var activationHoldDuration: Double = 0.60 {
-        didSet { scheduleSave() }
-    }
-
-    // MARK: - Grid
-
-    /// Grid divisions per axis (e.g. 3 = 3×3, 4 = 4×4). Range 2–6.
-    var gridDivisions: Int = 3 {
-        didSet { scheduleSave() }
-    }
-
-    // MARK: - Sensitivity
-
-    /// Drag distance in points to cover the full 0–1 range. Lower = more sensitive.
-    var dragRange: Double = 200 {
-        didSet { scheduleSave() }
-    }
-
-    /// Delay in seconds before the candidate ring animation appears.
-    var ringDelay: Double = 0.25 {
         didSet { scheduleSave() }
     }
 
@@ -399,9 +377,6 @@ final class AppSettings {
         Self.migrateLegacyDefaultsIfNeeded()
         let d = UserDefaults.standard
         if let v = d.object(forKey: "activationHoldDuration") as? Double { activationHoldDuration = v }
-        if let v = d.object(forKey: "gridDivisions")     as? Int    { gridDivisions     = v }
-        if let v = d.object(forKey: "dragRange")         as? Double { dragRange         = v }
-        if let v = d.object(forKey: "ringDelay")          as? Double { ringDelay          = v }
         if let v = d.object(forKey: "liftToSelect")      as? Bool   { liftToSelect      = v }
         if let v = d.object(forKey: "isTestMode")        as? Bool   { isTestMode        = v }
         if let v = d.object(forKey: "ringHeight")        as? Double { ringHeight        = v }
@@ -441,8 +416,7 @@ final class AppSettings {
               legacy.object(forKey: "radialMenuCategories") != nil else { return }
 
         let keys = [
-            "activationHoldDuration", "gridDivisions", "dragRange", "ringDelay",
-            "liftToSelect", "isTestMode", "ringHeight",
+            "activationHoldDuration", "liftToSelect", "isTestMode", "ringHeight",
             "selectionWidth", "menuLabelFontSize", "menuLabelWrappingEnabled",
             "numberedSlicesEnabled",
             "categoryFlexibilityPercent", "pauseWhileTyping",

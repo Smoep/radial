@@ -7,6 +7,7 @@
 
 import Foundation
 import AppKit
+import ServiceManagement
 import Testing
 @testable import Radial
 
@@ -46,6 +47,26 @@ struct RadialTests {
     @Test func inputTapSubscribesToScrollWheelEvents() {
         let scrollWheelBit: CGEventMask = 1 << CGEventType.scrollWheel.rawValue
         #expect(InputEventTap.eventMask & scrollWheelBit != 0)
+    }
+
+    @MainActor
+    @Test func loginItemManagerReflectsTheSystemRegistrationState() {
+        let manager = LoginItemManager.shared
+        manager.refresh()
+
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            #expect(manager.isRegistered)
+            #expect(!manager.requiresApproval)
+        case .requiresApproval:
+            #expect(manager.isRegistered)
+            #expect(manager.requiresApproval)
+        case .notRegistered, .notFound:
+            #expect(!manager.isRegistered)
+            #expect(!manager.requiresApproval)
+        @unknown default:
+            #expect(!manager.isRegistered)
+        }
     }
 
     @Test func preciseTrackpadScrollDeltasAccumulateAcrossEvents() {
@@ -141,6 +162,16 @@ struct RadialTests {
         #expect(Set(copyIDs).isDisjoint(with: Set(sourceIDs))) // nothing shared with the source
         #expect(copy.label == source.label)                    // content is preserved
         #expect(copy.children?.first?.children?.first?.label == "Deep")
+    }
+
+    @Test func aFreshMenuStartsEmpty() {
+        let key = "radialTests.emptyMenu.\(UUID().uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+
+        let store = RadialMenuStore(storageKey: key)
+
+        #expect(store.items.isEmpty)
+        #expect(UserDefaults.standard.object(forKey: key) == nil)
     }
 
 }

@@ -198,7 +198,7 @@ final class MouseTriggerService {
             if let screen = NSScreen.main {
                 lastCandidateScreen = CGPoint(x: nsLoc.x, y: screen.frame.height - nsLoc.y)
             }
-            loadingRing.show(at: nsLoc, duration: hold, delay: settings?.ringDelay ?? 0.25)
+            loadingRing.show(at: nsLoc, duration: hold)
             startHoldTimer(hold)
             mouseLog.info("mouse down (button \(button)) → hold \(hold)s")
         }
