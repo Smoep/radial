@@ -6,7 +6,7 @@
   <meta name="description" content="Learn how to build a Radial menu, configure triggers, understand every action type and tune the overlay for fast use.">
   <meta name="theme-color" content="#090a10">
   <title>Radial Help — Your actions, one gesture away</title>
-  <link rel="stylesheet" href="assets/help/help.css?v=recorded-overlay">
+  <link rel="stylesheet" href="assets/help/help.css?v=transparent-overlay">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to help</a>
@@ -24,14 +24,11 @@
       <div class="hero-actions"><a class="button primary" href="https://github.com/Smoep/radial/releases/latest">Download Radial 1.5.9</a><a class="button" href="#install">Start from scratch ↓</a></div>
       <p class="hero-note">Requires macOS 26.4 or later · Signed, not notarized · No sample content on a fresh install</p>
       <figure class="hero-visual">
-        <div class="overlay-video-wrap">
-          <video id="overlay-demo" class="overlay-video" width="338" height="338" autoplay muted loop playsinline preload="auto" poster="assets/help/07-numbered-navigation.png" aria-label="Radial opens, the pointer moves into Writing, then selects Copy on the action ring">
-            <source src="assets/help/radial-overlay-demo.mp4" type="video/mp4">
-            <img src="assets/help/07-numbered-navigation.png" width="288" height="288" alt="Radial's numbered category ring with Copy selected inside Writing">
-          </video>
-          <button id="overlay-demo-toggle" class="video-toggle" type="button" aria-controls="overlay-demo">Pause animation</button>
-        </div>
-        <figcaption><span class="animation-label">Recorded in Radial</span> The pointer enters <strong>Writing</strong>, reveals its actions and selects <strong>Copy</strong>.</figcaption>
+        <picture class="overlay-animation">
+          <source media="(prefers-reduced-motion: reduce)" srcset="assets/help/07-numbered-navigation.png">
+          <img src="assets/help/radial-overlay-demo.webp" width="338" height="338" alt="Radial opens as the pointer moves into Writing, reveals its actions and selects Copy">
+        </picture>
+        <figcaption>Move into <strong>Writing</strong> to reveal its actions, then continue outward to select <strong>Copy</strong>.</figcaption>
       </figure>
       <nav class="guide-nav" aria-label="Help topics"><a href="#install">Install</a><a href="#first-menu">First category &amp; action</a><a href="#using">Using the ring</a><a href="#actions">Action types</a><a href="#settings">All settings</a><a href="#tips">Tips &amp; tricks</a><a href="#app-menus">App menus</a><a href="#backup">Backup</a></nav>
     </header>
@@ -123,23 +120,5 @@
     <section id="backup"><div class="two-column"><div><p class="eyebrow">Backup &amp; restore</p><h2>Experiment without losing a setup you like.</h2><p class="lede">Settings → Behavior includes Backup &amp; Restore. Export before a major reorganization, then import after a reinstall or on another Mac.</p></div><div class="callout"><strong>Good habit:</strong> keep a dated backup after your directions become muscle memory. Restoring changes the menu and settings to the saved snapshot.</div></div></section>
   </main>
   <footer><span>Radial for macOS</span><span><a href="https://github.com/Smoep/radial">Source on GitHub</a> · <a href="https://github.com/Smoep/radial/issues">Report a problem</a></span></footer>
-  <script>
-    const overlayDemo = document.querySelector("#overlay-demo");
-    const overlayToggle = document.querySelector("#overlay-demo-toggle");
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) {
-      overlayDemo.pause();
-      overlayToggle.textContent = "Play animation";
-    }
-    overlayToggle.addEventListener("click", () => {
-      if (overlayDemo.paused) {
-        overlayDemo.play();
-        overlayToggle.textContent = "Pause animation";
-      } else {
-        overlayDemo.pause();
-        overlayToggle.textContent = "Play animation";
-      }
-    });
-  </script>
 </body>
 </html>
