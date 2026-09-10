@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import CoreGraphics
 import os
 
@@ -55,12 +54,8 @@ final class InputEventTap {
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
 
-    /// False when Accessibility permission is missing, the port is invalid, or
-    /// macOS has disabled the tap.
-    var isActive: Bool {
-        guard let tap, CFMachPortIsValid(tap) else { return false }
-        return CGEvent.tapIsEnabled(tap: tap)
-    }
+    /// False when Accessibility permission is missing and input passes through.
+    var isActive: Bool { tap != nil }
 
     // MARK: - Lifecycle
 
@@ -97,33 +92,6 @@ final class InputEventTap {
         }
         tap = nil
         source = nil
-    }
-
-    /// Heartbeat recovery for event taps, whose validity and enabled state are
-    /// queryable (unlike AppKit global-monitor tokens).
-    @discardableResult
-    func repairIfNeeded() -> Bool {
-        guard let tap else {
-            // Missing Accessibility permission is an intentional fallback, not
-            // a broken listener. Retry automatically once permission exists.
-            guard AXIsProcessTrusted() else { return false }
-            start()
-            return isActive
-        }
-
-        if CFMachPortIsValid(tap), !CGEvent.tapIsEnabled(tap: tap) {
-            CGEvent.tapEnable(tap: tap, enable: true)
-            if CGEvent.tapIsEnabled(tap: tap) {
-                tapLog.info("InputEventTap heartbeat re-enabled disabled tap")
-                return true
-            }
-        }
-
-        guard !CFMachPortIsValid(tap) || !CGEvent.tapIsEnabled(tap: tap) else { return false }
-        stop()
-        start()
-        tapLog.info("InputEventTap heartbeat rebuilt invalid tap")
-        return true
     }
 
     deinit { stop() }

@@ -115,13 +115,6 @@ final class SessionEngine {
     private let stateMachine: GestureStateMachine
     private let selectionOverlay = SelectionOverlay()
 
-    /// Active-Space recovery and listener heartbeat.
-    @ObservationIgnored private var spaceObserver: NSObjectProtocol?
-    @ObservationIgnored private var spaceRefreshWorkItem: DispatchWorkItem?
-    @ObservationIgnored private var listenerHeartbeat: Timer?
-    private let spaceRefreshDelay: TimeInterval = 0.30
-    private let listenerHeartbeatInterval: TimeInterval = 15
-
     /// Screen-space center of the overlay (set on engage).
     private var overlayCenter: CGPoint = .zero
 
@@ -360,7 +353,6 @@ final class SessionEngine {
         trackpad.start()
         mouse.start()
         inputTap.start()
-        startSpaceRecovery()
 
         // Combined monitor: pause-while-typing detection + hotkey trigger.
         // One monitor handles both so the hotkey is never treated as a "typing" keystroke.
@@ -440,7 +432,7 @@ final class SessionEngine {
         trackpad.stop()
         mouse.stop()
         inputTap.stop()
-        stopSpaceRecovery()
+        consumedNumberKeyCodes.removeAll()
         stateMachine.reset()
         consumedNumberKeyCodes.removeAll()
         if let m = keyMonitor    { NSEvent.removeMonitor(m); keyMonitor    = nil }
@@ -449,74 +441,6 @@ final class SessionEngine {
         isRunning = false
         phase = .idle
         isTouching = false
-    }
-
-    // MARK: - Active Space recovery
-
-    private func startSpaceRecovery() {
-        if spaceObserver == nil {
-            spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
-                forName: NSWorkspace.activeSpaceDidChangeNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                self?.activeSpaceDidChange()
-            }
-        }
-
-        if listenerHeartbeat == nil {
-            let timer = Timer(timeInterval: listenerHeartbeatInterval, repeats: true) { [weak self] _ in
-                self?.repairInputListeners()
-            }
-            RunLoop.main.add(timer, forMode: .common)
-            listenerHeartbeat = timer
-        }
-    }
-
-    private func stopSpaceRecovery() {
-        spaceRefreshWorkItem?.cancel()
-        spaceRefreshWorkItem = nil
-        listenerHeartbeat?.invalidate()
-        listenerHeartbeat = nil
-        if let observer = spaceObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(observer)
-            spaceObserver = nil
-        }
-    }
-
-    private func activeSpaceDidChange() {
-        guard isRunning else { return }
-        sessionLog.info("Active Space changed — retiring stale overlay panel")
-
-        // Input callbacks are hardware/session-global and the failure trace
-        // proves they continue firing. The WindowServer panel, however, remains
-        // nominally onscreen with transparent contents after topology changes.
-        dismissOverlay(immediately: true)
-        selectionOverlay.retireForSpaceChange()
-        _ = inputTap.repairIfNeeded()
-
-        // Space/window metadata settles asynchronously. Debounce rapid changes
-        // and verify the input state once more after WindowServer has published
-        // the new state. Do not invalidate the overlay here: the user may have
-        // already opened a fresh one during this delay.
-        spaceRefreshWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, self.isRunning else { return }
-            self.repairInputListeners()
-            sessionLog.info("Delayed active Space refresh completed")
-        }
-        spaceRefreshWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + spaceRefreshDelay, execute: work)
-    }
-
-    private func repairInputListeners() {
-        guard isRunning else { return }
-        let trackpadRepaired = trackpad.repairListenersIfNeeded()
-        let mouseRepaired = mouse.repairListenersIfNeeded()
-        let tapRepaired = inputTap.repairIfNeeded()
-        if trackpadRepaired || mouseRepaired || tapRepaired {
-            sessionLog.info("Listener heartbeat repaired input state: trackpad=\(trackpadRepaired) mouse=\(mouseRepaired) tap=\(tapRepaired)")
-        }
     }
 
     // MARK: - Tick
@@ -548,6 +472,7 @@ final class SessionEngine {
         if phase != newPhase {
             if newPhase == .active {
                 selectionPath = []
+                numberedSelectionCursor = nil
                 lockedDepth = 0
                 numberedSelectionCursor = nil
                 fingerAngle = 0
@@ -638,6 +563,11 @@ final class SessionEngine {
 
     private func updateRadialSelectionFromCursor() {
         let cursorLoc = NSEvent.mouseLocation
+        if let keyboardCursor = numberedSelectionCursor {
+            let movement = hypot(cursorLoc.x - keyboardCursor.x, cursorLoc.y - keyboardCursor.y)
+            if movement < 3 { return }
+            numberedSelectionCursor = nil
+        }
         let dx = cursorLoc.x - overlayCenter.x
         if let keyboardCursor = numberedSelectionCursor {
             let movement = hypot(cursorLoc.x - keyboardCursor.x, cursorLoc.y - keyboardCursor.y)
@@ -962,6 +892,7 @@ final class SessionEngine {
         }
         phase = .idle
         selectionPath = []
+        numberedSelectionCursor = nil
         lockedDepth = 0
         fingerRadius = 0
         numberedSelectionCursor = nil
@@ -1180,6 +1111,7 @@ final class SessionEngine {
 
         // Collapse back to the first ring.
         selectionPath = []
+        numberedSelectionCursor = nil
         lockedDepth = 0
         numberedSelectionCursor = nil
         ringRevealProgress = []
