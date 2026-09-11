@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import os
 
@@ -54,8 +55,12 @@ final class InputEventTap {
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
 
-    /// False when Accessibility permission is missing and input passes through.
-    var isActive: Bool { tap != nil }
+    /// False when Accessibility permission is missing, the port is invalid, or
+    /// macOS has disabled the tap.
+    var isActive: Bool {
+        guard let tap, CFMachPortIsValid(tap) else { return false }
+        return CGEvent.tapIsEnabled(tap: tap)
+    }
 
     // MARK: - Lifecycle
 
@@ -92,6 +97,44 @@ final class InputEventTap {
         }
         tap = nil
         source = nil
+    }
+
+    /// Repair event taps whose state macOS exposes as disabled or invalid.
+    /// A disabled tap can be re-armed in place; an invalid port must be rebuilt.
+    @discardableResult
+    func repairIfNeeded() -> Bool {
+        guard let tap else {
+            // Missing Accessibility permission is an intentional fallback, not
+            // a broken listener. Retry automatically once permission exists.
+            guard AXIsProcessTrusted() else { return false }
+            start()
+            return isActive
+        }
+
+        if CFMachPortIsValid(tap), !CGEvent.tapIsEnabled(tap: tap) {
+            CGEvent.tapEnable(tap: tap, enable: true)
+            if CGEvent.tapIsEnabled(tap: tap) {
+                tapLog.info("InputEventTap heartbeat re-enabled disabled tap")
+                return true
+            }
+        }
+
+        guard !CFMachPortIsValid(tap) || !CGEvent.tapIsEnabled(tap: tap) else { return false }
+        stop()
+        start()
+        tapLog.info("InputEventTap heartbeat rebuilt invalid tap")
+        return true
+    }
+
+    /// Wake can leave an event tap nominally enabled while it no longer receives
+    /// clicks. Recreate it after the login session has settled.
+    @discardableResult
+    func rebuildAfterWake() -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+        stop()
+        start()
+        tapLog.info("InputEventTap rebuilt after wake")
+        return isActive
     }
 
     deinit { stop() }

@@ -6,7 +6,7 @@ Radial is a menu-bar launcher for macOS. Open a circular menu at the pointer,
 move through categories and actions, then lift or click to run the selection.
 Build one global menu or give individual apps their own context-specific menus.
 
-## Download Radial 1.5.9
+## Download Radial 1.5.10
 
 [**Download Radial.zip from the latest release**](https://github.com/Smoep/radial/releases/latest)
 

@@ -115,6 +115,14 @@ final class SessionEngine {
     private let stateMachine: GestureStateMachine
     private let selectionOverlay = SelectionOverlay()
 
+    /// Recovery for Space changes, wake transitions, and stale input listeners.
+    @ObservationIgnored private var spaceObserver: NSObjectProtocol?
+    @ObservationIgnored private var wakeObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var listenerRefreshWorkItem: DispatchWorkItem?
+    @ObservationIgnored private var listenerHeartbeat: Timer?
+    private let listenerRefreshDelay: TimeInterval = 0.5
+    private let listenerHeartbeatInterval: TimeInterval = 15
+
     /// Screen-space center of the overlay (set on engage).
     private var overlayCenter: CGPoint = .zero
 
@@ -141,6 +149,9 @@ final class SessionEngine {
     /// unavailable. Events consumed by an active tap never reach this monitor,
     /// so the two paths cannot switch the menu twice.
     private var scrollMonitor: Any?
+    /// Confirmation fallback used only when the consuming event tap did not see
+    /// the click. A working tap consumes the event before this monitor receives it.
+    private var fallbackClickMonitor: Any?
     /// Timestamp of last hotkey key-down (used for double-tap detection).
     private var lastHotkeyPressTime: CFTimeInterval = 0
     /// Timestamp of last detected keystroke.
@@ -293,9 +304,22 @@ final class SessionEngine {
                 return true
             default:
                 let button = Int(event.getIntegerValueField(.mouseEventButtonNumber))
-                guard self.trackpad.isEngaged || self.mouse.ownsTriggerButton(button) else {
-                    return false
+                if self.trackpad.isEngaged {
+                    // Confirmation belongs to the active overlay, regardless of
+                    // whether the separate mouse trigger is enabled. Routing this
+                    // through MouseTriggerService made left clicks disappear when
+                    // Radial had been opened from the keyboard or trackpad while
+                    // `mouseEnabled` was false.
+                    if type == .leftMouseDown {
+                        sessionLog.info("InputEventTap received overlay confirmation click")
+                        self.trackpad.triggerExternalRelease()
+                    } else {
+                        self.mouse.handleSuppressedClick(type: type, button: button)
+                    }
+                    return true
                 }
+
+                guard self.mouse.ownsTriggerButton(button) else { return false }
                 self.mouse.handleSuppressedClick(type: type, button: button)
                 return true
             }
@@ -353,6 +377,7 @@ final class SessionEngine {
         trackpad.start()
         mouse.start()
         inputTap.start()
+        startListenerRecovery()
 
         // Combined monitor: pause-while-typing detection + hotkey trigger.
         // One monitor handles both so the hotkey is never treated as a "typing" keystroke.
@@ -420,6 +445,14 @@ final class SessionEngine {
             self.handleScrollSwitch(cgEvent)
         }
 
+        fallbackClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
+            guard let self, self.trackpad.isEngaged else { return }
+            // If this monitor received the event, the consuming tap did not.
+            // Confirm the selection so a stale tap cannot leave the visible menu inert.
+            sessionLog.info("Fallback confirmation received left click outside InputEventTap")
+            self.trackpad.triggerExternalRelease()
+        }
+
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -432,15 +465,107 @@ final class SessionEngine {
         trackpad.stop()
         mouse.stop()
         inputTap.stop()
-        consumedNumberKeyCodes.removeAll()
+        stopListenerRecovery()
         stateMachine.reset()
         consumedNumberKeyCodes.removeAll()
         if let m = keyMonitor    { NSEvent.removeMonitor(m); keyMonitor    = nil }
         if let m = hotkeyMonitor { NSEvent.removeMonitor(m); hotkeyMonitor = nil }
         if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
+        if let m = fallbackClickMonitor { NSEvent.removeMonitor(m); fallbackClickMonitor = nil }
         isRunning = false
         phase = .idle
         isTouching = false
+    }
+
+    // MARK: - Listener recovery
+
+    private func startListenerRecovery() {
+        let workspaceNotifications = NSWorkspace.shared.notificationCenter
+        if spaceObserver == nil {
+            spaceObserver = workspaceNotifications.addObserver(
+                forName: NSWorkspace.activeSpaceDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.activeSpaceDidChange()
+            }
+        }
+
+        if wakeObservers.isEmpty {
+            for name in [NSWorkspace.didWakeNotification,
+                         NSWorkspace.screensDidWakeNotification,
+                         NSWorkspace.sessionDidBecomeActiveNotification] {
+                wakeObservers.append(workspaceNotifications.addObserver(
+                    forName: name,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.scheduleWakeRecovery()
+                })
+            }
+        }
+
+        if listenerHeartbeat == nil {
+            let timer = Timer(timeInterval: listenerHeartbeatInterval, repeats: true) { [weak self] _ in
+                self?.repairInputListeners()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            listenerHeartbeat = timer
+        }
+    }
+
+    private func stopListenerRecovery() {
+        listenerRefreshWorkItem?.cancel()
+        listenerRefreshWorkItem = nil
+        listenerHeartbeat?.invalidate()
+        listenerHeartbeat = nil
+
+        let workspaceNotifications = NSWorkspace.shared.notificationCenter
+        if let spaceObserver {
+            workspaceNotifications.removeObserver(spaceObserver)
+            self.spaceObserver = nil
+        }
+        for observer in wakeObservers { workspaceNotifications.removeObserver(observer) }
+        wakeObservers.removeAll()
+    }
+
+    private func activeSpaceDidChange() {
+        guard isRunning else { return }
+        sessionLog.info("Active Space changed — retiring stale overlay panel")
+        dismissOverlay(immediately: true)
+        selectionOverlay.retireForSpaceChange()
+        scheduleListenerRepair(rebuildEventTap: false)
+    }
+
+    private func scheduleWakeRecovery() {
+        guard isRunning else { return }
+        sessionLog.info("Wake/session activation detected — scheduling input recovery")
+        dismissOverlay(immediately: true)
+        scheduleListenerRepair(rebuildEventTap: true)
+    }
+
+    private func scheduleListenerRepair(rebuildEventTap: Bool) {
+        listenerRefreshWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isRunning else { return }
+            if rebuildEventTap {
+                _ = self.inputTap.rebuildAfterWake()
+            }
+            self.repairInputListeners()
+            sessionLog.info("Delayed input-listener refresh completed")
+        }
+        listenerRefreshWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + listenerRefreshDelay, execute: work)
+    }
+
+    private func repairInputListeners() {
+        guard isRunning else { return }
+        let trackpadRepaired = trackpad.repairListenersIfNeeded()
+        let mouseRepaired = mouse.repairListenersIfNeeded()
+        let tapRepaired = inputTap.repairIfNeeded()
+        if trackpadRepaired || mouseRepaired || tapRepaired {
+            sessionLog.info("Listener heartbeat repaired input state: trackpad=\(trackpadRepaired) mouse=\(mouseRepaired) tap=\(tapRepaired)")
+        }
     }
 
     // MARK: - Tick
@@ -472,7 +597,6 @@ final class SessionEngine {
         if phase != newPhase {
             if newPhase == .active {
                 selectionPath = []
-                numberedSelectionCursor = nil
                 lockedDepth = 0
                 numberedSelectionCursor = nil
                 fingerAngle = 0
@@ -569,11 +693,6 @@ final class SessionEngine {
             numberedSelectionCursor = nil
         }
         let dx = cursorLoc.x - overlayCenter.x
-        if let keyboardCursor = numberedSelectionCursor {
-            let movement = hypot(cursorLoc.x - keyboardCursor.x, cursorLoc.y - keyboardCursor.y)
-            if movement < 3 { return }
-            numberedSelectionCursor = nil
-        }
         let dy = cursorLoc.y - overlayCenter.y
         let pixelDist = sqrt(dx * dx + dy * dy)
         if abs(pixelDist - fingerRadius) > 0.5 { fingerRadius = pixelDist }
@@ -892,7 +1011,6 @@ final class SessionEngine {
         }
         phase = .idle
         selectionPath = []
-        numberedSelectionCursor = nil
         lockedDepth = 0
         fingerRadius = 0
         numberedSelectionCursor = nil
@@ -1111,7 +1229,6 @@ final class SessionEngine {
 
         // Collapse back to the first ring.
         selectionPath = []
-        numberedSelectionCursor = nil
         lockedDepth = 0
         numberedSelectionCursor = nil
         ringRevealProgress = []

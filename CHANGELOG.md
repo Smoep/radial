@@ -1,5 +1,15 @@
 # Release history
 
+## 1.5.10 — 2026-09-11
+
+- Fixed clicks on a visible Radial menu being ignored when the separate mouse
+  trigger was disabled.
+- Rebuilds the input event tap after wake or session activation and periodically
+  repairs stale input listeners.
+- Restored active-Space recovery so stale overlay panels are retired cleanly.
+- Added a click-confirmation fallback for cases where macOS stops delivering
+  clicks through the consuming event tap.
+
 ## 1.5.9 — 2026-09-09
 
 - Added **Start Radial at Login** in Settings → Behavior.
